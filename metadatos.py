@@ -311,7 +311,9 @@ def leer_metadatos(ruta: Path, completo: bool = True) -> dict:
         if exif.get(TAG_ORIENTACION) in (5, 6, 7, 8):
             ancho, alto = alto, ancho
         datos = {"fecha": fecha_exif(exif), "fuente": "exif", "ancho": ancho, "alto": alto,
-                 "animado": bool(getattr(im, "is_animated", False))}
+                 # MPO (JPEG de Sony, Fujifilm… con vista previa o par 3D) tiene varias
+                 # imágenes pero no es una animación: se trata como un JPEG normal
+                 "animado": bool(getattr(im, "is_animated", False)) and im.format != "MPO"}
         if completo:
             sub = exif.get_ifd(IFD_EXIF)
             xmp, iptc = leer_xmp(xmp_de(im)), leer_iptc(im)

@@ -159,6 +159,19 @@ class Procesamiento(CasoConCarpeta):
         with Image.open(gif) as im:
             self.assertTrue(im.is_animated)
 
+    def test_jpeg_mpo_de_camara_se_reduce_y_no_se_trata_como_animado(self):
+        # Error anterior: los JPG de Sony (MPO: foto + vista previa) se copiaban a 6000 px
+        grande = Image.new("RGB", (4000, 3000), (120, 60, 30))
+        exif = Image.Exif()
+        exif.get_ifd(0x8769)[36867] = "2020:01:01 00:00:26"
+        grande.save(self.origen / "DSC03510.JPG", "MPO", save_all=True, exif=exif,
+                    append_images=[grande.resize((1600, 1200))])
+        with Image.open(self.origen / "DSC03510.JPG") as im:
+            self.assertEqual((im.format, im.is_animated), ("MPO", True))
+        self.procesar()
+        with Image.open(self.destino / "2020/01-Enero/20200101_000026.jpg") as im:
+            self.assertEqual(im.size, (3200, 2400))
+
     def test_si_recomprimir_no_compensa_conserva_el_original(self):
         # Ruido guardado con calidad 20: recomprimir a calidad 88 solo engordaría
         pequena = self.origen / "IMG_20240401_101010.jpg"
