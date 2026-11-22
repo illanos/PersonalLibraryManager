@@ -4,7 +4,6 @@ Requiere:  pip install Pillow
 Opcional:  pip install pillow-heif   (fotos HEIC/HEIF del iPhone)
 """
 
-import math
 import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -16,10 +15,11 @@ from PIL import Image, ImageOps
 
 from catalogo import Catalogo, Informe
 from media_utils import (
-    NOMBRE_ORIGINALES, copiar_atomico, fecha_desde_nombre, fecha_mtime, fecha_plausible,
-    hash_archivo, imprimir, imprimir_resumen, listar_archivos, nombre_libre,
-    nuevas_estadisticas, ruta_temporal, subcarpeta_fecha,
+    NOMBRE_ORIGINALES, copiar_atomico, fecha_desde_nombre, fecha_mtime, hash_archivo,
+    imprimir, imprimir_resumen, listar_archivos, nombre_libre, nuevas_estadisticas,
+    ruta_temporal, subcarpeta_fecha,
 )
+from metadatos import leer_metadatos, parametros_guardado
 
 try:
     from pillow_heif import register_heif_opener
@@ -41,12 +41,6 @@ FORMATOS = {
 MAX_LADO = 2560   # píxeles máximos en el lado largo (0 = no redimensionar)
 CALIDAD = 88      # 80-92 = buen equilibrio calidad/peso
 
-# Etiquetas EXIF
-IFD_EXIF, IFD_GPS = 0x8769, 0x8825
-TAG_FECHA_ORIGINAL, TAG_FECHA_DIGITALIZADA, TAG_FECHA = 36867, 36868, 306
-TAG_MARCA, TAG_MODELO, TAG_ORIENTACION = 271, 272, 274
-
-
 @dataclass
 class OpcionesFotos:
     max_lado: int = MAX_LADO
@@ -56,93 +50,7 @@ class OpcionesFotos:
     hilos: int = 0          # 0 = automático
 
 
-# ----------------------------- Metadatos -----------------------------
-
-def _parsear_fecha_exif(valor):
-    if not isinstance(valor, str):
-        return None
-    texto = valor.strip().strip("\x00").strip()[:19]
-    for formato in ("%Y:%m:%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
-        try:
-            fecha = datetime.strptime(texto, formato)
-        except ValueError:
-            continue
-        return fecha if fecha_plausible(fecha) else None
-    return None
-
-
-def fecha_exif(exif):
-    """DateTimeOriginal > DateTimeDigitized > DateTime.
-
-    Las dos primeras están en el sub-IFD Exif, no en el principal: hay que pedirlas
-    con get_ifd(); `exif.get(36867)` a secas devuelve siempre None.
-    """
-    sub = exif.get_ifd(IFD_EXIF)
-    for valor in (sub.get(TAG_FECHA_ORIGINAL), sub.get(TAG_FECHA_DIGITALIZADA),
-                  exif.get(TAG_FECHA_ORIGINAL), exif.get(TAG_FECHA)):
-        fecha = _parsear_fecha_exif(valor)
-        if fecha:
-            return fecha
-    return None
-
-
-def _a_grados(valor) -> float:
-    grados, minutos, segundos = (float(x) for x in valor)
-    return grados + minutos / 60 + segundos / 3600
-
-
-def _gps(exif):
-    """[lat, lon] en grados decimales, o None."""
-    gps = exif.get_ifd(IFD_GPS)
-    if not gps:
-        return None
-    try:
-        lat = _a_grados(gps[2]) * (-1 if str(gps.get(1, "N")).upper().startswith("S") else 1)
-        lon = _a_grados(gps[4]) * (-1 if str(gps.get(3, "E")).upper().startswith("W") else 1)
-    except (KeyError, TypeError, ValueError, ZeroDivisionError):
-        return None
-    if not (math.isfinite(lat) and math.isfinite(lon)) or (lat == 0 and lon == 0):
-        return None
-    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-        return None
-    return [round(lat, 6), round(lon, 6)]
-
-
-def _texto_exif(valor) -> str:
-    return str(valor or "").strip("\x00 ").strip()
-
-
-def _camara(exif) -> str:
-    marca, modelo = _texto_exif(exif.get(TAG_MARCA)), _texto_exif(exif.get(TAG_MODELO))
-    # "Canon" + "Canon EOS 5D" -> "Canon EOS 5D"
-    if marca and modelo.lower().startswith(marca.split()[0].lower()):
-        return modelo
-    return f"{marca} {modelo}".strip()
-
-
-def leer_metadatos(ruta: Path) -> dict:
-    """Fecha (y su origen), dimensiones ya orientadas, cámara, GPS y si es animada.
-
-    Lanza excepción si el archivo no se puede abrir como imagen.
-    """
-    with Image.open(ruta) as im:
-        exif = im.getexif()
-        ancho, alto = im.size
-        if exif.get(TAG_ORIENTACION) in (5, 6, 7, 8):
-            ancho, alto = alto, ancho
-        datos = {
-            "fecha": fecha_exif(exif), "fuente": "exif",
-            "ancho": ancho, "alto": alto,
-            "camara": _camara(exif), "gps": _gps(exif),
-            "animado": bool(getattr(im, "is_animated", False)),
-        }
-    if datos["fecha"] is None:
-        datos["fecha"] = fecha_desde_nombre(ruta.stem)
-        datos["fuente"] = "nombre"
-    if datos["fecha"] is None:
-        datos["fecha"], datos["fuente"] = fecha_mtime(ruta), "archivo"
-    return datos
-
+# ----------------------------- Fecha -----------------------------
 
 def obtener_fecha(ruta: Path):
     """(fecha, fuente): EXIF > nombre del archivo > fecha de modificación."""
@@ -156,21 +64,19 @@ def obtener_fecha(ruta: Path):
 
 # ----------------------------- Optimización -----------------------------
 
-def guardar_optimizada(ruta: Path, destino: Path, opciones: OpcionesFotos = None):
+def guardar_optimizada(ruta: Path, destino: Path, opciones: OpcionesFotos = None) -> list:
     """Escribe en `destino` la versión reducida y recomprimida (de forma atómica).
 
-    Conserva EXIF (fecha, cámara, GPS) y el perfil de color ICC: sin él, las fotos
-    de móviles en Display P3 se ven apagadas.
+    Conserva EXIF, XMP, IPTC, ICC y comentario (ver metadatos.py). Devuelve la
+    lista de avisos sobre metadatos que no se hayan podido conservar.
     """
     opciones = opciones or OpcionesFotos()
     formato_pil = FORMATOS[opciones.formato][0]
+    avisos = []
 
     with Image.open(ruta) as original:
-        modo_original = original.mode
-        icc = original.info.get("icc_profile")
         im = ImageOps.exif_transpose(original)   # aplica la rotación EXIF
-        exif = im.getexif()
-        exif.pop(TAG_ORIENTACION, None)          # ya aplicada: evitar doble giro
+        kwargs = parametros_guardado(original, im, formato_pil, avisos)
 
     if opciones.max_lado and max(im.size) > opciones.max_lado:
         factor = opciones.max_lado / max(im.size)
@@ -187,16 +93,10 @@ def guardar_optimizada(ruta: Path, destino: Path, opciones: OpcionesFotos = None
         im.paste(rgba, mask=rgba.getchannel("A"))
     elif im.mode not in ("RGB", "L"):
         im = im.convert("RGB")
-    if modo_original == "CMYK":
-        icc = None   # el perfil CMYK no vale para la imagen ya convertida a RGB
 
-    kwargs = {"quality": opciones.calidad}
+    kwargs["quality"] = opciones.calidad
     if formato_pil == "JPEG":
         kwargs.update(optimize=True, progressive=True)
-    if icc:
-        kwargs["icc_profile"] = icc
-    if len(exif):
-        kwargs["exif"] = exif
 
     tmp = ruta_temporal(destino)
     try:
@@ -205,6 +105,7 @@ def guardar_optimizada(ruta: Path, destino: Path, opciones: OpcionesFotos = None
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+    return avisos
 
 
 # ----------------------------- Procesamiento -----------------------------
@@ -223,6 +124,7 @@ class _Tarea:
     animado: bool = False
     destino: Path = None
     original: Path = None
+    avisos: list = None
 
 
 def _analizar(ruta: Path, catalogo: Catalogo) -> _Tarea:
@@ -239,7 +141,7 @@ def _analizar(ruta: Path, catalogo: Catalogo) -> _Tarea:
         if fila is not None:
             t.estado, t.detalle = "ya_importado", fila["destino"]
             return t
-        datos = leer_metadatos(ruta)
+        datos = leer_metadatos(ruta, completo=False)
         t.fecha, t.fuente = datos["fecha"], datos["fuente"]
         t.dimensiones = (datos["ancho"], datos["alto"])
         t.animado = datos["animado"]
@@ -256,14 +158,17 @@ def _ejecutar(t: _Tarea, opciones: OpcionesFotos, extensiones_mismo_formato: set
             copiar_atomico(t.ruta, t.destino)   # GIF/WebP animados: no perder la animación
             accion = "COPIADO_ANIMADO"
         else:
-            guardar_optimizada(t.ruta, t.destino, opciones)
+            t.avisos = guardar_optimizada(t.ruta, t.destino, opciones)
             sin_redimensionar = not opciones.max_lado or max(t.dimensiones) <= opciones.max_lado
             if (sin_redimensionar and t.ruta.suffix.lower() in extensiones_mismo_formato
                     and t.destino.stat().st_size >= t.tamano):
                 copiar_atomico(t.ruta, t.destino)   # recomprimir no compensa
-                accion = "SIN_CAMBIOS"
+                accion, t.avisos = "SIN_CAMBIOS", []
             else:
                 accion = "OK"
+        # Fecha del archivo = fecha de captura: el explorador ordena igual que la galería
+        marca = t.fecha.timestamp()
+        os.utime(t.destino, (marca, marca))
         if t.original:
             t.original.parent.mkdir(parents=True, exist_ok=True)
             copiar_atomico(t.ruta, t.original)
@@ -363,10 +268,12 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
                     fecha=t.fecha.isoformat(), fuente_fecha=t.fuente,
                     bytes_antes=t.tamano, bytes_despues=despues)
                 informe.anotar(accion, t.ruta, destino_rel, t.fecha, t.fuente,
-                               t.tamano, despues)
+                               t.tamano, despues, "; ".join(t.avisos or []))
                 etiqueta = {"OK": "OK", "SIN_CAMBIOS": "SIN CAMBIOS",
                             "COPIADO_ANIMADO": "ANIMADA"}[accion]
                 imprimir(f"{prefijo} {etiqueta}  {rel}  ->  {destino_rel}")
+                for aviso in t.avisos or []:
+                    imprimir(f"      aviso: {aviso}")
                 stats["procesados"] += 1
                 stats["sin_cambios"] += accion != "OK"
                 stats["bytes_antes"] += t.tamano
