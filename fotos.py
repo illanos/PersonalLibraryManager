@@ -16,7 +16,7 @@ from PIL import Image, ImageOps
 from catalogo import Catalogo, Informe
 from clasificacion import carpeta_destino, categoria
 from media_utils import (
-    NOMBRE_ORIGINALES, copiar_atomico, fecha_desde_nombre, fecha_mtime, hash_archivo,
+    NOMBRE_ORIGINALES, copiar_atomico, fecha_desde_nombre, fecha_mtime, fecha_y_nombre, hash_archivo,
     imprimir, imprimir_resumen, listar_archivos, nombre_libre, nuevas_estadisticas,
     ruta_temporal, subcarpeta_fecha,
 )
@@ -132,6 +132,7 @@ class _Tarea:
     phash: str = None
     parecidas: list = None     # otras fotos del mismo grupo (para el informe)
     mejor: object = None       # con omitir_parecidas: la copia que se queda (tarea o destino)
+    base: str = ""             # nombre final sin extensión (AAAAMMDD_HHMMSS...)
     categoria: str = ""        # whatsapp | pegatina | captura | '' (ver clasificacion.py)
 
 
@@ -155,7 +156,7 @@ def _analizar(ruta: Path, catalogo: Catalogo, origen: Path) -> _Tarea:
             t.estado, t.detalle = "parecida_conocida", descarte["referencia"]
             return t
         datos = leer_metadatos(ruta, completo=False)
-        t.fecha, t.fuente = datos["fecha"], datos["fuente"]
+        t.fecha, t.fuente, t.base = fecha_y_nombre(ruta, datos["fecha"], datos["fuente"])
         t.dimensiones = (datos["ancho"], datos["alto"])
         t.animado = datos["animado"]
         t.categoria = categoria(ruta.relative_to(origen), *t.dimensiones)
@@ -308,7 +309,7 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
                 tal_cual = t.animado or t.categoria == "pegatina"
                 ext = t.ruta.suffix.lower() if tal_cual else ext_salida
                 t.destino = nombre_libre(destino / carpeta_rel,
-                                         t.fecha.strftime("%Y%m%d_%H%M%S"), ext, reservados)
+                                         t.base, ext, reservados)
                 if opciones.conservar_originales:
                     t.original = nombre_libre(carpeta_originales / carpeta_rel,
                                               t.ruta.stem, t.ruta.suffix, reservados)

@@ -124,6 +124,7 @@ def etiquetas_automaticas(e: dict) -> list:
         ("Verticales", alto > ancho * 1.1 > 0),
         ("Panorámicas", alto and ancho / alto >= 2),   # no las capturas de móvil (verticales)
         ("Fecha dudosa", e.get("fuente_fecha") == "archivo"),
+        ("Hora aproximada", e.get("fuente_fecha") == "nombre+hora_archivo"),
         ("Parecidas", e.get("parecidas")),
     ]
     return [nombre for nombre, cumple in reglas if cumple]
