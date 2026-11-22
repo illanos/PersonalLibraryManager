@@ -16,7 +16,7 @@ from pathlib import Path
 
 from catalogo import Catalogo, Informe
 from media_utils import (
-    NOMBRE_ORIGINALES, fecha_desde_nombre, fecha_mtime, formato_bytes, hash_archivo,
+    NOMBRE_ORIGINALES, copiar_atomico, fecha_desde_nombre, fecha_mtime, formato_bytes, hash_archivo,
     imprimir_resumen, listar_archivos, nombre_libre, nuevas_estadisticas,
     parsear_fecha_iso, ruta_temporal, subcarpeta_fecha,
 )
@@ -57,6 +57,7 @@ class OpcionesVideos:
     max_lado: int = 1920     # 0 = mantener resolución
     crf: int = None          # None = el del perfil
     preset: str = "medium"   # h264/h265: ultrafast ... veryslow
+    conservar_originales: bool = False   # copia extra en originales/ (el origen nunca se toca)
 
 
 # ----------------------------- Metadatos -----------------------------
@@ -245,11 +246,12 @@ def ejecutar_ffmpeg(cmd: list, duracion: float = 0, etiqueta: str = ""):
 
 def procesar_videos(origen: Path, destino: Path, simular: bool,
                     opciones: OpcionesVideos = None) -> dict:
-    """Recodifica y organiza. El original solo se mueve cuando ya hay versión final.
+    """Recodifica y organiza. El origen solo se lee: nunca se mueve, modifica ni borra.
 
-    - Codificación correcta y más ligera: el original pasa a originales/Año/Mes.
-    - Codificación correcta pero no más ligera: el original va a la biblioteca tal cual.
-    - Error o interrupción: el original no se toca y no queda ningún archivo a medias.
+    - Codificación correcta y más ligera: la versión nueva entra en la biblioteca (y, con
+      `conservar_originales`, una copia del original en originales/Año/Mes).
+    - Codificación correcta pero no más ligera: se copia el original a la biblioteca tal cual.
+    - Error o interrupción: no queda ningún archivo a medias en el destino.
     """
     opciones = opciones or OpcionesVideos()
     perfil = PERFILES[opciones.codec]
@@ -325,18 +327,20 @@ def procesar_videos(origen: Path, destino: Path, simular: bool,
                     reservados.discard(str(destino_video).lower())
                     final = nombre_libre(destino / carpeta_rel, base, ruta.suffix.lower(),
                                          reservados)
-                    shutil.move(str(ruta), final)
+                    copiar_atomico(ruta, final)
                     original_rel, accion = None, "SIN_CAMBIOS"
                     print(f"{prefijo} SIN CAMBIOS  {rel}  ->  {carpeta_rel}/{final.name}"
                           "  (ya estaba bien comprimido)")
                 else:
                     os.replace(tmp, destino_video)
                     final = destino_video
-                    original = nombre_libre(carpeta_originales / carpeta_rel, ruta.stem,
-                                            ruta.suffix, reservados)
-                    original.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.move(str(ruta), original)
-                    original_rel, accion = original.relative_to(destino).as_posix(), "OK"
+                    original_rel, accion = None, "OK"
+                    if opciones.conservar_originales:
+                        original = nombre_libre(carpeta_originales / carpeta_rel, ruta.stem,
+                                                ruta.suffix, reservados)
+                        original.parent.mkdir(parents=True, exist_ok=True)
+                        copiar_atomico(ruta, original)
+                        original_rel = original.relative_to(destino).as_posix()
                     print(f"{prefijo} OK  {rel}  ->  {carpeta_rel}/{final.name}{cambio}"
                           f"  ({formato_bytes(st.st_size)} -> "
                           f"{formato_bytes(final.stat().st_size)})")
@@ -358,14 +362,15 @@ def procesar_videos(origen: Path, destino: Path, simular: bool,
             except KeyboardInterrupt:
                 if tmp is not None:
                     tmp.unlink(missing_ok=True)
-                print("\nInterrumpido. El vídeo en curso se ha descartado y su original "
-                      "sigue en su sitio; vuelve a ejecutar para continuar.")
+                print("\nInterrumpido. El vídeo en curso se ha descartado; "
+                      "vuelve a ejecutar para continuar.")
                 raise
             except Exception as exc:
                 print(f"{prefijo} ERROR en {rel}: {exc}")
                 informe.anotar("ERROR", ruta, detalle=str(exc))
                 stats["errores"] += 1
 
-    imprimir_resumen(stats, "vídeos", simular, carpeta_originales,
+    imprimir_resumen(stats, "vídeos", simular,
+                     carpeta_originales if opciones.conservar_originales else None,
                      informe.ruta if informe.filas else None)
     return stats

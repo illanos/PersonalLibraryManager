@@ -68,29 +68,42 @@ class Procesamiento(CasoConCarpeta):
         self.video = self.origen / "VID_20240512_102030.mov"
         self.video.write_bytes(b"v" * 1000)
 
-    def procesar(self, bytes_salida=None, ok=True):
+    def procesar(self, bytes_salida=None, ok=True, **opciones):
         def codificar(cmd, duracion=0, etiqueta=""):
             if bytes_salida is not None:
                 Path(cmd[-1]).write_bytes(b"x" * bytes_salida)
             return ok, "" if ok else "Invalid data found"
         with mock.patch("videos.sondear", return_value=None), \
                 mock.patch("videos.ejecutar_ffmpeg", side_effect=codificar):
-            return videos.procesar_videos(self.origen, self.destino, False)
+            return videos.procesar_videos(self.origen, self.destino, False,
+                                          videos.OpcionesVideos(**opciones))
 
-    def test_correcto_mueve_el_original(self):
+    def test_correcto_no_toca_el_original(self):
         stats = self.procesar(bytes_salida=100)
         self.assertEqual(stats["procesados"], 1)
-        self.assertFalse(self.video.exists())
+        self.assertEqual(self.video.read_bytes(), b"v" * 1000)
         archivos = self.archivos(self.destino)
         self.assertIn("2024/05-Mayo/20240512_102030.mp4", archivos)
-        self.assertIn("originales/2024/05-Mayo/VID_20240512_102030.mov", archivos)
+        self.assertFalse(any(a.startswith("originales/") for a in archivos))
         self.assertFalse([a for a in archivos if a.endswith(".part")])
+
+    def test_con_originales_copia_el_original(self):
+        self.procesar(bytes_salida=100, conservar_originales=True)
+        self.assertTrue(self.video.exists())
+        self.assertIn("originales/2024/05-Mayo/VID_20240512_102030.mov",
+                      self.archivos(self.destino))
+
+    def test_segunda_ejecucion_no_reimporta(self):
+        self.procesar(bytes_salida=100)
+        stats = self.procesar(bytes_salida=100)
+        self.assertEqual((stats["procesados"], stats["ya_importados"]), (0, 1))
 
     def test_si_no_reduce_peso_entra_el_original(self):
         stats = self.procesar(bytes_salida=5000)
         self.assertEqual(stats["sin_cambios"], 1)
         self.assertIn("2024/05-Mayo/20240512_102030.mov", self.archivos(self.destino))
         self.assertNotIn("2024/05-Mayo/20240512_102030.mp4", self.archivos(self.destino))
+        self.assertTrue(self.video.exists())
 
     def test_error_no_toca_el_original(self):
         stats = self.procesar(bytes_salida=100, ok=False)

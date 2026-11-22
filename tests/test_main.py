@@ -18,6 +18,17 @@ class LineaDeComandos(unittest.TestCase):
         args = construir_parser().parse_args(["videos", "x", "--max-lado", "2560"])
         self.assertEqual(args.max_lado_video, 2560)
 
+    def test_originales_solo_si_se_piden(self):
+        from main import opciones_fotos, opciones_videos
+        p = construir_parser()
+        for comando in ("fotos", "videos", "todo"):
+            self.assertFalse(p.parse_args([comando, "x"]).con_originales)
+        args = p.parse_args(["todo", "x", "--con-originales"])
+        self.assertTrue(opciones_fotos(args).conservar_originales)
+        self.assertTrue(opciones_videos(args).conservar_originales)
+        args = p.parse_args(["fotos", "x", "--sin-originales"])   # opción antigua, aceptada
+        self.assertFalse(opciones_fotos(args).conservar_originales)
+
     def test_calidad_fuera_de_rango(self):
         with self.assertRaises(SystemExit), unittest.mock.patch("sys.stderr"):
             construir_parser().parse_args(["fotos", "x", "--calidad", "150"])

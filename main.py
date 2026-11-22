@@ -52,6 +52,11 @@ def construir_parser() -> argparse.ArgumentParser:
                        help="Biblioteca destino (por defecto: <origen>_organizados)")
     comun.add_argument("--simular", action="store_true",
                        help="Muestra qué haría sin crear, mover ni modificar nada")
+    comun.add_argument("--con-originales", action="store_true",
+                       help="Guardar además una copia intacta de cada original en "
+                            "originales/ (el origen nunca se toca)")
+    # Compatibilidad: no copiar los originales es ya el comportamiento por defecto
+    comun.add_argument("--sin-originales", action="store_true", help=argparse.SUPPRESS)
 
     op_fotos = argparse.ArgumentParser(add_help=False)
     g = op_fotos.add_argument_group("fotos")
@@ -61,8 +66,6 @@ def construir_parser() -> argparse.ArgumentParser:
                    help="Calidad de compresión 1-100 (por defecto 88)")
     g.add_argument("--formato", choices=["jpeg", "webp"], default="jpeg",
                    help="jpeg = universal | webp = ~30 %% menos peso (por defecto jpeg)")
-    g.add_argument("--sin-originales", action="store_true",
-                   help="No guardar copia de las fotos originales (el origen no se toca)")
     g.add_argument("--hilos", type=_positivo, default=0,
                    help="Fotos en paralelo (por defecto: según los núcleos del equipo)")
 
@@ -142,14 +145,15 @@ MENSAJE_FFMPEG = ("FFmpeg no está disponible en la terminal. Instálalo con:\n"
 def opciones_fotos(args):
     from fotos import OpcionesFotos
     return OpcionesFotos(max_lado=args.max_lado_fotos, calidad=args.calidad,
-                         formato=args.formato, conservar_originales=not args.sin_originales,
+                         formato=args.formato, conservar_originales=args.con_originales,
                          hilos=args.hilos)
 
 
 def opciones_videos(args):
     from videos import OpcionesVideos
     return OpcionesVideos(codec=args.codec, max_lado=args.max_lado_video,
-                          crf=args.crf, preset=args.preset)
+                          crf=args.crf, preset=args.preset,
+                          conservar_originales=args.con_originales)
 
 
 def galeria(carpeta: Path, args, regenerar: bool = False):

@@ -105,7 +105,7 @@ class Procesamiento(CasoConCarpeta):
         archivos = self.archivos(self.destino)
         self.assertIn("2023/08-Agosto/20230815_203107.jpg", archivos)
         self.assertIn("2024/01-Enero/20240102_030405.jpg", archivos)
-        self.assertIn("originales/2023/08-Agosto/IMG_0001.jpg", archivos)
+        self.assertFalse(any(a.startswith("originales/") for a in archivos))
         self.assertTrue(any(a.startswith(".exportador/informes/fotos_") for a in archivos))
         final = self.destino / "2023/08-Agosto/20230815_203107.jpg"
         self.assertEqual(datetime.fromtimestamp(final.stat().st_mtime),
@@ -127,9 +127,18 @@ class Procesamiento(CasoConCarpeta):
         self.assertEqual(stats["procesados"], 1)
         self.assertTrue((self.destino / "2024/01-Enero/20240102_030405.jpg").exists())
 
-    def test_sin_originales(self):
-        self.procesar(conservar_originales=False)
-        self.assertFalse((self.destino / "originales").exists())
+    def test_origen_queda_intacto(self):
+        antes = {r: (r.stat().st_size, r.stat().st_mtime_ns, r.read_bytes())
+                 for r in self.origen.rglob("*") if r.is_file()}
+        self.procesar()
+        despues = {r: (r.stat().st_size, r.stat().st_mtime_ns, r.read_bytes())
+                   for r in self.origen.rglob("*") if r.is_file()}
+        self.assertEqual(despues, antes)
+
+    def test_con_originales_guarda_copia(self):
+        self.procesar(conservar_originales=True)
+        self.assertIn("originales/2023/08-Agosto/IMG_0001.jpg", self.archivos(self.destino))
+        self.assertTrue((self.origen / "IMG_0001.jpg").exists())
 
     def test_gif_animado_se_copia_tal_cual(self):
         fotogramas = [Image.new("RGB", (64, 64), c) for c in ((255, 0, 0), (0, 0, 255))]

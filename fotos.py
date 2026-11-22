@@ -46,7 +46,7 @@ class OpcionesFotos:
     max_lado: int = MAX_LADO
     calidad: int = CALIDAD
     formato: str = "jpeg"
-    conservar_originales: bool = True
+    conservar_originales: bool = False   # copia extra en originales/ (el origen nunca se toca)
     hilos: int = 0          # 0 = automático
 
 

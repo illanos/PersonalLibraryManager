@@ -17,7 +17,8 @@ class Indice(CasoConCarpeta):
         crear_foto(self.dir / "movil" / "Screenshot_20240305-101112.jpg", tam=(300, 650),
                    fecha=None)
         self.bib = self.dir / "bib"
-        procesar_fotos(self.dir / "movil", self.bib, False, OpcionesFotos(hilos=1))
+        procesar_fotos(self.dir / "movil", self.bib, False,
+                       OpcionesFotos(hilos=1, conservar_originales=True))
 
     def test_genera_indice_con_metadatos_y_miniaturas(self):
         self.assertTrue(galeria.generar_galeria(self.bib))

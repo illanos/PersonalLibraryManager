@@ -61,7 +61,7 @@ Opciones principales (`python main.py <comando> -h` para verlas todas):
 | `--max-lado` | fotos, todo | Lado largo máximo de las fotos (2560; `0` = no reducir) |
 | `--calidad` | fotos, todo | Calidad de compresión 1-100 (88) |
 | `--formato jpeg\|webp` | fotos, todo | WebP pesa ~30 % menos |
-| `--sin-originales` | fotos, todo | No guarda copia de las fotos originales |
+| `--con-originales` | fotos, videos, todo | Guarda además una copia intacta de cada original en `originales/` |
 | `--hilos N` | fotos, todo | Fotos en paralelo (por defecto, según núcleos) |
 | `--codec h264\|h265\|vp9` | videos, todo | MP4 universal, MP4 más ligero o WebM libre |
 | `--max-lado-video` | videos, todo | Lado largo máximo de los vídeos (1920; en `videos` también `--max-lado`) |
@@ -74,7 +74,7 @@ Opciones principales (`python main.py <comando> -h` para verlas todas):
 ```
 Biblioteca/
 ├── 2024/08-Agosto/20240810_190211.jpg     fotos y vídeos optimizados, por fecha de captura
-├── originales/2024/08-Agosto/IMG_0101.JPG copia intacta del original
+├── originales/2024/08-Agosto/IMG_0101.JPG copia del original (solo con --con-originales)
 ├── .exportador/catalogo.sqlite            qué se importó, de dónde y con qué resultado
 ├── .exportador/informes/fotos_*.csv       una fila por archivo y ejecución (abre en Excel)
 ├── galeria.html + galeria.json            galería web
@@ -95,9 +95,10 @@ Biblioteca/
   importado (misma ruta, tamaño y fecha, o mismo contenido en otra ruta) se salta sin
   reprocesar. Si borras un archivo de la biblioteca, la siguiente importación lo vuelve a
   traer: el catálogo nunca hace perder fotos.
-- **Nada se destruye**: los duplicados se dejan en el origen; las fotos se copian (el origen
-  queda intacto) y se guarda otra copia en `originales/`; los vídeos se mueven a
-  `originales/` solo cuando la versión nueva está terminada.
+- **El origen solo se lee**: fotos y vídeos se copian o recodifican hacia la biblioteca; en
+  la carpeta de origen nunca se mueve, modifica ni borra nada (tampoco los duplicados). Por
+  eso, por defecto, no se guarda otra copia del original; con `--con-originales` se añade
+  una en `originales/` para tener la biblioteca completa en un solo sitio.
 - **Escritura atómica**: todo se escribe primero como `.part` y se renombra al final. Si se
   interrumpe (Ctrl+C, apagón), no quedan archivos a medias y basta con volver a ejecutar.
 - **Si recomprimir no compensa** (la salida pesaría más) se conserva el original tal cual.
