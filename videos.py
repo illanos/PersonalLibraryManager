@@ -1,18 +1,23 @@
-"""Tratamiento de vídeos: renombrado por fecha, organización y recodificación.
+"""Tratamiento de vídeos: fecha de grabación, organización Año/Mes y recodificación.
 
 Requiere FFmpeg y ffprobe accesibles en la terminal:
     winget install Gyan.FFmpeg
 """
 
 import json
+import os
 import shutil
 import subprocess
-from datetime import datetime
+import sys
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
+from catalogo import Catalogo, Informe
 from media_utils import (
-    NOMBRE_ORIGINALES, dest_folder, hash_archivo, imprimir_resumen,
-    listar_archivos, nombre_libre, nombre_original_libre,
+    NOMBRE_ORIGINALES, fecha_desde_nombre, fecha_mtime, formato_bytes, hash_archivo,
+    imprimir_resumen, listar_archivos, nombre_libre, nuevas_estadisticas,
+    parsear_fecha_iso, ruta_temporal, subcarpeta_fecha,
 )
 
 EXTENSIONES_VIDEO = {
@@ -20,169 +25,315 @@ EXTENSIONES_VIDEO = {
     ".mpg", ".mpeg", ".mts", ".m2ts", ".3gp", ".webm", ".flv",
 }
 
-CRF_H264 = 23
-CRF_VP9 = 32
-PRESET_H264 = "medium"
-AUDIO_KBPS = 128
+AUDIO = ["-b:a", "128k"]
 
 PERFILES = {
-    "h264": {"ext": ".mp4",  "crf": CRF_H264},
-    "vp9":  {"ext": ".webm", "crf": CRF_VP9},
+    # H.264 + AAC en MP4: se reproduce en cualquier sitio.
+    "h264": {"ext": ".mp4", "formato": "mp4", "crf": 23,
+             "video": ["-c:v", "libx264", "-preset", "{preset}", "-pix_fmt", "yuv420p"],
+             "audio": ["-c:a", "aac", *AUDIO],
+             "extra": ["-movflags", "+faststart+use_metadata_tags"]},
+    # H.265/HEVC: ~40 % menos peso que H.264; algunos navegadores antiguos no lo reproducen.
+    "h265": {"ext": ".mp4", "formato": "mp4", "crf": 28,
+             "video": ["-c:v", "libx265", "-preset", "{preset}", "-pix_fmt", "yuv420p",
+                       "-tag:v", "hvc1", "-x265-params", "log-level=error"],
+             "audio": ["-c:a", "aac", *AUDIO],
+             "extra": ["-movflags", "+faststart+use_metadata_tags"]},
+    # VP9 + Opus en WebM: libre de patentes, más lento de codificar.
+    "vp9": {"ext": ".webm", "formato": "webm", "crf": 32,
+            "video": ["-c:v", "libvpx-vp9", "-b:v", "0", "-row-mt", "1",
+                      "-deadline", "good", "-cpu-used", "2"],
+            "audio": ["-c:a", "libopus", *AUDIO],
+            "extra": []},
 }
+
+CLAVES_FECHA = ("com.apple.quicktime.creationdate", "creation_time", "date")
+
+
+@dataclass
+class OpcionesVideos:
+    codec: str = "h264"
+    max_lado: int = 1920     # 0 = mantener resolución
+    crf: int = None          # None = el del perfil
+    preset: str = "medium"   # h264/h265: ultrafast ... veryslow
+
+
+# ----------------------------- Metadatos -----------------------------
+
+def _rotacion(stream: dict) -> int:
+    """Giro del vídeo (los móviles graban en horizontal y marcan el giro)."""
+    rotacion = (stream.get("tags") or {}).get("rotate")
+    for datos in stream.get("side_data_list") or []:
+        if "rotation" in datos:
+            rotacion = datos["rotation"]
+    try:
+        return int(float(rotacion or 0))
+    except ValueError:
+        return 0
+
+
+def _fecha_metadatos(datos: dict):
+    """Fecha de grabación según los metadatos del contenedor o de las pistas."""
+    grupos = [datos.get("format", {}).get("tags") or {}]
+    grupos += [s.get("tags") or {} for s in datos.get("streams", [])]
+    grupos = [{k.lower(): v for k, v in g.items()} for g in grupos]
+    for clave in CLAVES_FECHA:   # la de Apple lleva la hora local: es la más fiable
+        for tags in grupos:
+            fecha = parsear_fecha_iso(tags.get(clave))
+            if fecha:
+                return fecha
+    return None
 
 
 def sondear(ruta: Path):
-    """Fecha (creation_time) y dimensiones vía ffprobe, o None si falla."""
+    """Metadatos vía ffprobe (fecha, dimensiones de visualización, duración...) o None."""
     cmd = ["ffprobe", "-v", "error", "-print_format", "json",
            "-show_format", "-show_streams", str(ruta)]
     try:
-        salida = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        salida = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", timeout=60, stdin=subprocess.DEVNULL)
         if salida.returncode != 0:
             return None
         datos = json.loads(salida.stdout)
-    except Exception:
+    except (OSError, ValueError, subprocess.TimeoutExpired):
         return None
 
-    fecha = None
-    candidatos = [datos.get("format", {}).get("tags", {})]
-    candidatos += [s.get("tags", {}) for s in datos.get("streams", [])]
-    for tags in candidatos:
-        crudo = tags.get("creation_time")
-        if crudo:
-            try:
-                fecha = datetime.fromisoformat(crudo.replace("Z", "+00:00"))
-                break
-            except ValueError:
-                pass
-
-    ancho = alto = 0
-    for s in datos.get("streams", []):
-        if s.get("codec_type") == "video":
-            ancho = int(s.get("width") or 0)
-            alto = int(s.get("height") or 0)
-            break
-
-    return {"fecha": fecha, "ancho": ancho, "alto": alto}
+    video = next((s for s in datos.get("streams", [])
+                  if s.get("codec_type") == "video"
+                  and not (s.get("disposition") or {}).get("attached_pic")), {})
+    ancho, alto = int(video.get("width") or 0), int(video.get("height") or 0)
+    rotacion = _rotacion(video)
+    if abs(rotacion) % 180 == 90:
+        ancho, alto = alto, ancho   # se ve en vertical
+    formato = datos.get("format", {})
+    try:
+        duracion = float(formato.get("duration") or video.get("duration") or 0)
+    except ValueError:
+        duracion = 0.0
+    return {
+        "fecha": _fecha_metadatos(datos),
+        "ancho": ancho, "alto": alto, "rotacion": rotacion,
+        "duracion": duracion,
+        "codec": video.get("codec_name", ""),
+    }
 
 
-def obtener_fecha(ruta: Path) -> datetime:
-    info = sondear(ruta)
-    if info and info["fecha"]:
-        return info["fecha"]
-    return datetime.fromtimestamp(ruta.stat().st_mtime)
+def fecha_video(ruta: Path, info: dict = None):
+    """(fecha, fuente): metadatos > nombre del archivo > fecha de modificación."""
+    if info and info.get("fecha"):
+        return info["fecha"], "metadatos"
+    fecha = fecha_desde_nombre(ruta.stem)
+    if fecha:
+        return fecha, "nombre"
+    return fecha_mtime(ruta), "archivo"
+
+
+def obtener_fecha(ruta: Path):
+    return fecha_video(ruta, sondear(ruta))[0]
 
 
 def dimensiones_objetivo(ancho: int, alto: int, max_lado: int):
-    """Dimensiones pares (requisito de H.264) manteniendo proporción."""
-    if not ancho or not alto or max(ancho, alto) <= max_lado:
+    """Dimensiones finales previstas (pares) manteniendo la proporción."""
+    if not ancho or not alto:
         return ancho, alto
-    factor = max_lado / max(ancho, alto)
-    nuevo_w = max(2, round(ancho * factor) - round(ancho * factor) % 2)
-    nuevo_h = max(2, round(alto * factor) - round(alto * factor) % 2)
-    return nuevo_w, nuevo_h
+    factor = min(1.0, max_lado / max(ancho, alto)) if max_lado else 1.0
+    return (max(2, int(ancho * factor) // 2 * 2), max(2, int(alto * factor) // 2 * 2))
 
 
-def comando_codificacion(entrada: Path, salida: Path, codec: str,
-                         ancho: int, alto: int, crf: int):
-    escala = ["-vf", f"scale={ancho}:{alto}"]
-    meta = ["-map_metadata", "0", "-loglevel", "error"]
+# ----------------------------- Codificación -----------------------------
 
-    if codec == "h264":
-        return ["ffmpeg", "-y", "-i", str(entrada), *meta, *escala,
-                "-c:v", "libx264", "-preset", PRESET_H264, "-crf", str(crf),
-                "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-b:a", f"{AUDIO_KBPS}k",
-                "-movflags", "+faststart", str(salida)]
-    return ["ffmpeg", "-y", "-i", str(entrada), *meta, *escala,
-            "-c:v", "libvpx-vp9", "-crf", str(crf), "-b:v", "0", "-row-mt", "1",
-            "-c:a", "libopus", "-b:a", f"{AUDIO_KBPS}k", str(salida)]
+def filtro_escala(max_lado: int) -> str:
+    """Filtro de escalado que FFmpeg evalúa sobre la imagen YA girada.
 
+    No usa las dimensiones de ffprobe: en vídeos verticales de móvil vienen sin
+    girar y forzarlas deformaría la imagen. Limita el lado largo a `max_lado`,
+    mantiene la proporción y deja dimensiones pares (requisito de H.264).
+    """
+    if not max_lado:
+        return "scale=trunc(iw/2)*2:trunc(ih/2)*2"
+    m = int(max_lado)
+    return (f"scale=w='if(gte(iw,ih),trunc(min(iw,{m})/2)*2,-2)'"
+            f":h='if(gte(iw,ih),-2,trunc(min(ih,{m})/2)*2)'")
+
+
+def comando_codificacion(entrada: Path, salida: Path, opciones: OpcionesVideos) -> list:
+    perfil = PERFILES[opciones.codec]
+    crf = opciones.crf if opciones.crf is not None else perfil["crf"]
+    video = [a.replace("{preset}", opciones.preset) for a in perfil["video"]]
+    return [
+        "ffmpeg", "-hide_banner", "-nostdin", "-y", "-i", str(entrada),
+        "-map", "0:v:0", "-map", "0:a:0?", "-map_metadata", "0",
+        "-vf", filtro_escala(opciones.max_lado),
+        *video, "-crf", str(crf), *perfil["audio"], *perfil["extra"],
+        "-loglevel", "error", "-progress", "pipe:1", "-nostats",
+        "-f", perfil["formato"], str(salida),
+    ]
+
+
+def _mostrar_progreso(etiqueta: str, porcentaje: float):
+    if sys.stdout.isatty():
+        sys.stdout.write(f"\r{etiqueta}  {porcentaje:5.1f} %")
+        sys.stdout.flush()
+
+
+def _borrar_progreso(etiqueta: str):
+    if sys.stdout.isatty():
+        sys.stdout.write("\r" + " " * (len(etiqueta) + 10) + "\r")
+        sys.stdout.flush()
+
+
+def ejecutar_ffmpeg(cmd: list, duracion: float = 0, etiqueta: str = ""):
+    """Ejecuta FFmpeg mostrando el porcentaje. Devuelve (ok, mensaje_de_error).
+
+    Si se interrumpe (Ctrl+C), mata FFmpeg antes de propagar la interrupción.
+    """
+    with tempfile.TemporaryFile() as errores:
+        proceso = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errores,
+                                   stdin=subprocess.DEVNULL, text=True,
+                                   encoding="utf-8", errors="replace")
+        try:
+            for linea in proceso.stdout:
+                clave, _, valor = linea.strip().partition("=")
+                # out_time_ms está en microsegundos (error histórico de FFmpeg)
+                if clave in ("out_time_us", "out_time_ms") and valor.isdigit() and duracion > 0:
+                    _mostrar_progreso(etiqueta, min(100.0, int(valor) / 1e6 / duracion * 100))
+            proceso.wait()
+        except BaseException:
+            proceso.kill()
+            proceso.wait()
+            raise
+        finally:
+            _borrar_progreso(etiqueta)
+        errores.seek(0)
+        mensaje = errores.read().decode("utf-8", "replace").strip()
+    return proceso.returncode == 0, mensaje
+
+
+# ----------------------------- Procesamiento -----------------------------
 
 def procesar_videos(origen: Path, destino: Path, simular: bool,
-                    codec: str = "h264", max_lado: int = 1920):
-    perfil = PERFILES[codec]
-    extension_salida = perfil["ext"]
-    crf = perfil["crf"]
-    carpeta_originales = destino / NOMBRE_ORIGINALES
-    archivos = listar_archivos(origen, EXTENSIONES_VIDEO)
+                    opciones: OpcionesVideos = None) -> dict:
+    """Recodifica y organiza. El original solo se mueve cuando ya hay versión final.
 
+    - Codificación correcta y más ligera: el original pasa a originales/Año/Mes.
+    - Codificación correcta pero no más ligera: el original va a la biblioteca tal cual.
+    - Error o interrupción: el original no se toca y no queda ningún archivo a medias.
+    """
+    opciones = opciones or OpcionesVideos()
+    perfil = PERFILES[opciones.codec]
+    carpeta_originales = destino / NOMBRE_ORIGINALES
+    stats = nuevas_estadisticas()
+
+    archivos = listar_archivos(origen, EXTENSIONES_VIDEO)
     if not archivos:
         print(f"No se encontraron vídeos en {origen}")
-        return
-
-    hashes_vistos = {}
-    stats = {"procesados": 0, "duplicados": 0, "errores": 0,
-             "bytes_antes": 0, "bytes_despues": 0}
+        return stats
 
     print(f"\n{'SIMULACIÓN' if simular else 'PROCESANDO'} — {len(archivos)} vídeo(s)"
-          f" — codec: {codec.upper()}, máx. {max_lado} px\n")
+          f" — codec: {opciones.codec.upper()}, "
+          f"máx. {opciones.max_lado or 'sin límite'} px\n")
 
-    for ruta in archivos:
-        try:
-            fecha = obtener_fecha(ruta)
-            base = fecha.strftime("%Y%m%d_%H%M%S")
-            subcarpeta_rel = dest_folder(fecha)
-            ruta_final = destino / subcarpeta_rel
-            ruta_final.mkdir(parents=True, exist_ok=True)
+    reservados, vistos = set(), {}
+    with Catalogo(destino, simular) as catalogo, Informe(destino, "videos", simular) as informe:
+        for n, ruta in enumerate(archivos, 1):
+            rel = ruta.relative_to(origen)
+            prefijo = f"  [{n}/{len(archivos)}]"
+            tmp = None
+            try:
+                st = ruta.stat()
+                fila = catalogo.buscar_por_origen(ruta, st)
+                digest = None
+                if fila is None:
+                    digest = hash_archivo(ruta)
+                    fila = catalogo.buscar_por_hash(digest)
+                if fila is not None:
+                    stats["ya_importados"] += 1
+                    continue
+                if digest in vistos:
+                    print(f"{prefijo} DUPLICADO  {rel}  (igual que {vistos[digest]})")
+                    informe.anotar("DUPLICADO", ruta, detalle=f"igual que {vistos[digest]}")
+                    stats["duplicados"] += 1
+                    continue
 
-            digerir = hash_archivo(ruta)
-            if digerir in hashes_vistos:
-                print(f"  DUPLICADO  {ruta.name}  (= {hashes_vistos[digerir]})")
-                if not simular:
-                    ruta.unlink()
-                stats["duplicados"] += 1
-                continue
+                info = sondear(ruta) or {}
+                fecha, fuente = fecha_video(ruta, info)
+                carpeta_rel = subcarpeta_fecha(fecha)
+                base = fecha.strftime("%Y%m%d_%H%M%S")
+                destino_video = nombre_libre(destino / carpeta_rel, base, perfil["ext"],
+                                             reservados)
+                ancho, alto = info.get("ancho", 0), info.get("alto", 0)
+                nuevo = dimensiones_objetivo(ancho, alto, opciones.max_lado)
+                cambio = f"  ({ancho}x{alto} -> {nuevo[0]}x{nuevo[1]})" \
+                    if ancho and nuevo != (ancho, alto) else ""
 
-            info = sondear(ruta)
-            ancho = info["ancho"] if info else 0
-            alto = info["alto"] if info else 0
-            nuevo_w, nuevo_h = dimensiones_objetivo(ancho, alto, max_lado)
-            escalar = (nuevo_w, nuevo_h) != (ancho, alto) and nuevo_w > 0
+                if simular:
+                    print(f"{prefijo} {rel}  ->  {carpeta_rel}/{destino_video.name}{cambio}"
+                          f"  [fecha: {fuente}]")
+                    vistos[digest] = rel
+                    stats["procesados"] += 1
+                    continue
 
-            destino_video = nombre_libre(ruta_final, base, extension_salida)
+                destino_video.parent.mkdir(parents=True, exist_ok=True)
+                tmp = ruta_temporal(destino_video)
+                ok, error = ejecutar_ffmpeg(
+                    comando_codificacion(ruta, tmp, opciones),
+                    info.get("duracion", 0), f"{prefijo} codificando {rel}")
 
-            if simular:
-                cambio = f" ({ancho}x{alto} -> {nuevo_w}x{nuevo_h})" if escalar else ""
-                print(f"  {ruta.name}  ->  {subcarpeta_rel}/{destino_video.name}{cambio}")
-                hashes_vistos[digerir] = ruta.name
+                if not ok or not tmp.exists() or tmp.stat().st_size == 0:
+                    tmp.unlink(missing_ok=True)
+                    detalle = (error or "FFmpeg no generó salida").splitlines()[-1][:300]
+                    print(f"{prefijo} ERROR  {rel}: {detalle}")
+                    informe.anotar("ERROR", ruta, detalle=detalle)
+                    stats["errores"] += 1
+                    continue
+
+                if tmp.stat().st_size >= st.st_size:
+                    # Recomprimir no compensa: el original entra en la biblioteca tal cual
+                    tmp.unlink()
+                    reservados.discard(str(destino_video).lower())
+                    final = nombre_libre(destino / carpeta_rel, base, ruta.suffix.lower(),
+                                         reservados)
+                    shutil.move(str(ruta), final)
+                    original_rel, accion = None, "SIN_CAMBIOS"
+                    print(f"{prefijo} SIN CAMBIOS  {rel}  ->  {carpeta_rel}/{final.name}"
+                          "  (ya estaba bien comprimido)")
+                else:
+                    os.replace(tmp, destino_video)
+                    final = destino_video
+                    original = nombre_libre(carpeta_originales / carpeta_rel, ruta.stem,
+                                            ruta.suffix, reservados)
+                    original.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(ruta), original)
+                    original_rel, accion = original.relative_to(destino).as_posix(), "OK"
+                    print(f"{prefijo} OK  {rel}  ->  {carpeta_rel}/{final.name}{cambio}"
+                          f"  ({formato_bytes(st.st_size)} -> "
+                          f"{formato_bytes(final.stat().st_size)})")
+
+                despues = final.stat().st_size
+                destino_rel = final.relative_to(destino).as_posix()
+                catalogo.registrar(
+                    hash=digest, tipo="video", origen=str(ruta), tamano=st.st_size,
+                    mtime_ns=st.st_mtime_ns, destino=destino_rel, original=original_rel,
+                    fecha=fecha.isoformat(), fuente_fecha=fuente,
+                    bytes_antes=st.st_size, bytes_despues=despues)
+                informe.anotar(accion, ruta, destino_rel, fecha, fuente, st.st_size, despues)
+                vistos[digest] = rel
                 stats["procesados"] += 1
-                continue
+                stats["sin_cambios"] += accion == "SIN_CAMBIOS"
+                stats["bytes_antes"] += st.st_size
+                stats["bytes_despues"] += despues
 
-            # Conservar original (se mueve: duplicarlo ocuparía demasiado)
-            carpeta_originales.mkdir(parents=True, exist_ok=True)
-            destino_original = nombre_original_libre(carpeta_originales, ruta)
-            shutil.move(str(ruta), destino_original)
-
-            cmd = comando_codificacion(destino_original, destino_video, codec,
-                                       nuevo_w or 0, nuevo_h or 0, crf)
-            resultado = subprocess.run(cmd, capture_output=True, text=True)
-
-            ok = resultado.returncode == 0 and destino_video.exists()
-            if ok and destino_video.stat().st_size >= destino_original.stat().st_size:
-                destino_video.unlink(missing_ok=True)
-                destino_final = nombre_libre(ruta_final, base, destino_original.suffix)
-                shutil.move(str(destino_original), destino_final)
-                print(f"  SIN CAMBIOS  {ruta.name} -> {subcarpeta_rel}/{destino_final.name}"
-                      "  (ya estaba bien comprimido)")
-                antes = despues = destino_final.stat().st_size
-            elif ok:
-                cambio = f" ({ancho}x{alto}->{nuevo_w}x{nuevo_h})" if escalar else ""
-                print(f"  OK  {ruta.name} -> {subcarpeta_rel}/{destino_video.name}{cambio}")
-                antes = destino_original.stat().st_size
-                despues = destino_video.stat().st_size
-            else:
-                shutil.move(str(destino_original), ruta)  # restaurar original
-                print(f"  ERROR  {ruta.name}: {resultado.stderr.strip()[:200]}")
+            except KeyboardInterrupt:
+                if tmp is not None:
+                    tmp.unlink(missing_ok=True)
+                print("\nInterrumpido. El vídeo en curso se ha descartado y su original "
+                      "sigue en su sitio; vuelve a ejecutar para continuar.")
+                raise
+            except Exception as exc:
+                print(f"{prefijo} ERROR en {rel}: {exc}")
+                informe.anotar("ERROR", ruta, detalle=str(exc))
                 stats["errores"] += 1
-                continue
 
-            stats["bytes_antes"] += antes
-            stats["bytes_despues"] += despues
-            hashes_vistos[digerir] = ruta.name
-            stats["procesados"] += 1
-
-        except Exception as exc:
-            print(f"  ERROR en {ruta.name}: {exc}")
-            stats["errores"] += 1
-
-    imprimir_resumen(stats, "vídeos", carpeta_originales, simular)
+    imprimir_resumen(stats, "vídeos", simular, carpeta_originales,
+                     informe.ruta if informe.filas else None)
+    return stats
