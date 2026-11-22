@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Exportador — organiza, renombra y optimiza fotos y vídeos, y crea una galería web local.
+Exportador — organiza, renombra y optimiza fotos, vídeos y audio, y crea una galería web local.
 
 Uso:
     python main.py fotos   <origen> [--destino DEST] [--simular] [opciones de fotos]
@@ -44,7 +44,8 @@ def _calidad(texto: str) -> int:
 def construir_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="exportador",
-        description="Organiza, renombra y optimiza tus fotos y vídeos.",
+        description="Organiza, renombra y optimiza tus fotos, vídeos y notas de voz, y crea "
+                    "una galería web local. El origen solo se lee: nunca se modifica.",
     )
     sub = parser.add_subparsers(dest="comando", required=True)
 
