@@ -91,6 +91,12 @@ def construir_parser() -> argparse.ArgumentParser:
                    choices=["ultrafast", "superfast", "veryfast", "faster", "fast",
                             "medium", "slow", "slower", "veryslow"],
                    help="Velocidad de codificación h264/h265 (más lento = archivos menores)")
+    g.add_argument("--hilos-video", type=_positivo, default=1,
+                   help="Vídeos codificándose a la vez (por defecto 1; 2-3 si sobra CPU/GPU)")
+    g.add_argument("--hw", choices=["auto", "nvenc", "qsv", "amf", "no"], default="no",
+                   help="Codificación por hardware: auto = la que ofrezca el FFmpeg instalado "
+                        "(NVIDIA nvenc, Intel qsv, AMD amf); si falla, se repite por software. "
+                        "Por defecto no (software, archivos algo menores)")
 
     servir = argparse.ArgumentParser(add_help=False)
     g = servir.add_argument_group("galería")
@@ -179,7 +185,8 @@ def opciones_videos(args):
     from videos import OpcionesVideos
     return OpcionesVideos(codec=args.codec, max_lado=args.max_lado_video,
                           crf=args.crf, preset=args.preset,
-                          conservar_originales=args.con_originales)
+                          conservar_originales=args.con_originales,
+                          hilos=args.hilos_video or 1, hw=args.hw)
 
 
 def galeria(carpeta: Path, args, regenerar: bool = False):
