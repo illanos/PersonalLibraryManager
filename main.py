@@ -5,7 +5,8 @@ Exportador — organiza, renombra y optimiza fotos y vídeos, y crea una galerí
 Uso:
     python main.py fotos   <origen> [--destino DEST] [--simular] [opciones de fotos]
     python main.py videos  <origen> [--destino DEST] [--simular] [opciones de vídeo]
-    python main.py todo    <origen> [--destino DEST] [--simular] [--servir]
+    python main.py audio   <origen> [--destino DEST] [--simular]
+    python main.py todo    <origen> [--destino DEST] [--simular] [--servir] [--sin-audio]
     python main.py galeria <carpeta> [--servir] [--puerto N] [--regenerar]
     python main.py reorganizar <biblioteca> [--whatsapp] [--fechas-aproximadas] [--simular]
 
@@ -115,8 +116,14 @@ def construir_parser() -> argparse.ArgumentParser:
     p_videos.add_argument("--max-lado", dest="max_lado_video", type=_positivo,
                           help=argparse.SUPPRESS)
 
+    sub.add_parser("audio", parents=[comun],
+                   help="Organizar notas de voz y audios (.opus .mp3 .m4a .aac .ogg .wav), "
+                        "copiados sin recomprimir")
+
     p_todo = sub.add_parser("todo", parents=[comun, op_fotos, op_videos, servir],
-                            help="Fotos + vídeos + galería en un solo paso")
+                            help="Fotos + vídeos + audio + galería en un solo paso")
+    p_todo.add_argument("--sin-audio", action="store_true",
+                        help="No importar notas de voz ni audios")
     p_todo.add_argument("--sin-galeria", action="store_true",
                         help="No generar la galería al terminar")
 
@@ -238,6 +245,10 @@ def main(argv=None):
         else:
             print("\nAVISO: se omiten los vídeos porque FFmpeg no está instalado "
                   "(winget install Gyan.FFmpeg).")
+
+    if args.comando == "audio" or (args.comando == "todo" and not args.sin_audio):
+        from audio import procesar_audio
+        procesar_audio(origen, destino, args.simular)
 
     if args.renombrar_aproximadas and (destino / ".exportador").exists():
         from reorganizar import reorganizar

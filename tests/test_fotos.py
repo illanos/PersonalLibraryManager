@@ -1,4 +1,5 @@
 import os
+import shutil
 import unittest
 from datetime import datetime
 
@@ -85,7 +86,9 @@ class Procesamiento(CasoConCarpeta):
         self.origen = self.dir / "movil"
         self.destino = self.dir / "biblioteca"
         crear_foto(self.origen / "IMG_0001.jpg", tam=(3000, 2000), completa=True)
-        crear_foto(self.origen / "sub" / "copia.jpg", tam=(3000, 2000), completa=True)
+        # Copia exacta (volver a crearla no vale: el perfil ICC lleva la hora de creación)
+        (self.origen / "sub").mkdir()
+        shutil.copy2(self.origen / "IMG_0001.jpg", self.origen / "sub" / "copia.jpg")
         crear_foto(self.origen / "IMG_0002.jpg", fecha="2024:01:02 03:04:05", color=(10, 90, 200))
 
     def procesar(self, **opciones):

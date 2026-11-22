@@ -82,6 +82,10 @@
   .item:hover img { transform: scale(1.03); }
   .item .sin-mini { position: absolute; inset: 0; display: grid; place-items: center; color: var(--tenue); }
   .item .sin-mini svg { width: 40px; height: 40px; }
+  .item .sin-mini.audio { background: linear-gradient(135deg, #2a2540, #1b2a33); color: #b9a8ff; }
+  .reproductor { display: flex; flex-direction: column; align-items: center; gap: 24px; width: min(520px, 90%); }
+  .reproductor svg { width: 120px; height: 120px; color: #b9a8ff; }
+  .reproductor audio { width: 100%; }
   .duracion { position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.65);
               padding: 1px 6px; border-radius: 4px; font-size: .75rem; display: flex; gap: 3px; align-items: center; }
   .duracion svg { width: 12px; height: 12px; fill: currentColor; stroke: none; }
@@ -157,6 +161,7 @@
     <button class="chip activo" data-tipo="">Todo</button>
     <button class="chip" data-tipo="foto">Fotos</button>
     <button class="chip" data-tipo="video">Vídeos</button>
+    <button class="chip" data-tipo="audio" hidden>Audio</button>
     <button class="chip" data-tipo="fav">★ Favoritos</button>
   </div>
   <button id="btn-whatsapp" class="chip" aria-pressed="false"
@@ -227,6 +232,7 @@ const estado = {
 };
 
 /* ---------- Utilidades ---------- */
+const ICONO_AUDIO = '<svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>';
 const ICONO_PLAY = '<svg viewBox="0 0 24 24"><path d="M8 5.5l11 6.5-11 6.5z"/></svg>';
 const ICONO_ESTRELLA = '<svg viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg>';
 const fmtMes = new Intl.DateTimeFormat('es', { month: 'long', year: 'numeric' });
@@ -249,6 +255,7 @@ function tamano(b) {
   return `${b.toFixed(i ? 1 : 0).replace('.', ',')} ${u[i]}`;
 }
 function proporcion(it) {
+  if (it.tipo === 'audio') return '1.000';
   const ar = it.ancho && it.alto ? it.ancho / it.alto : (it.tipo === 'video' ? 16 / 9 : 4 / 3);
   return Math.min(2.5, Math.max(0.5, ar)).toFixed(3);
 }
@@ -279,7 +286,7 @@ async function cargar() {
     const f = fecha(it);
     it._busqueda = normalizar([
       it.nombre, it.fecha.replace('T', ' '), isNaN(f) ? '' : fmtMes.format(f), it.carpeta,
-      it.tipo === 'video' ? 'video' : 'foto', it.camara, it.objetivo, it.titulo, it.descripcion,
+      it.tipo === 'video' ? 'video' : it.tipo === 'audio' ? 'audio nota de voz' : 'foto', it.camara, it.objetivo, it.titulo, it.descripcion,
       it.autor, it.nombre_original, ...(it.etiquetas || []), ...(it.personas || []), ...(it.auto || []),
     ].filter(Boolean).join(' '));
     it._claves = new Set();
@@ -300,6 +307,7 @@ async function cargar() {
   });
   await cargarFavoritos();
   $('btn-whatsapp').hidden = !estado.items.some(it => it.ambito === 'whatsapp');
+  document.querySelector('.chip[data-tipo="audio"]').hidden = !estado.items.some(it => it.tipo === 'audio');
   pintarOcultar();
   rellenarAnios();
   pintarPanelEtiquetas();
@@ -389,7 +397,10 @@ function crearTarjeta(it, i) {
   fig.tabIndex = 0;
   const f = fecha(it);
   fig.title = `${it.nombre} · ${isNaN(f) ? it.fecha : fmtCorto.format(f)}`;
-  if (it.thumb || it.tipo === 'foto') {
+  if (it.tipo === 'audio') {
+    const ph = document.createElement('div'); ph.className = 'sin-mini audio'; ph.innerHTML = ICONO_AUDIO;
+    fig.append(ph);
+  } else if (it.thumb || it.tipo === 'foto') {
     const img = document.createElement('img');
     img.loading = 'lazy'; img.decoding = 'async'; img.alt = it.nombre;
     img.src = ruta(it.thumb || it.src);
@@ -397,7 +408,7 @@ function crearTarjeta(it, i) {
   } else {
     const ph = document.createElement('div'); ph.className = 'sin-mini'; ph.innerHTML = ICONO_PLAY; fig.append(ph);
   }
-  if (it.tipo === 'video') {
+  if (it.tipo === 'video' || it.tipo === 'audio') {
     const d = document.createElement('span'); d.className = 'duracion';
     d.innerHTML = ICONO_PLAY; d.append(it.duracion ? duracion(it.duracion) : '');
     fig.append(d);
@@ -657,6 +668,14 @@ function mostrar() {
     if (it.thumb) v.poster = ruta(it.thumb);
     v.addEventListener('ended', () => { if (estado.pase) mover(1); });
     medio.append(v);
+  } else if (it.tipo === 'audio') {
+    const caja = document.createElement('div'); caja.className = 'reproductor';
+    caja.innerHTML = ICONO_AUDIO;
+    const a = document.createElement('audio');
+    a.src = ruta(it.src); a.controls = true; a.autoplay = true; a.preload = 'auto';
+    a.addEventListener('ended', () => { if (estado.pase) mover(1); });
+    a.addEventListener('error', () => avisar('Este navegador no puede reproducir este audio; usa «Descargar».'));
+    caja.append(a); medio.append(caja);
   } else {
     const img = document.createElement('img'); img.src = ruta(it.src); img.alt = it.nombre;
     medio.append(img);
@@ -716,7 +735,7 @@ function pintarDatos(it) {
   if (it.nombre_original && it.nombre_original !== archivo) fila('Nombre original', it.nombre_original);
   fila('Dimensiones', it.ancho && it.alto ? `${it.ancho} × ${it.alto} px` +
        (it.tipo === 'foto' ? ` (${(it.ancho * it.alto / 1e6).toFixed(1).replace('.', ',')} MP)` : '') : '');
-  fila('Duración', it.tipo === 'video' && it.duracion ? duracion(it.duracion) : '');
+  fila('Duración', it.tipo !== 'foto' && it.duracion ? duracion(it.duracion) : '');
   fila('Tamaño', it.bytes ? tamano(it.bytes) : '');
   fila('Cámara', chips('camara', it.camara ? [it.camara] : []));
   fila('Objetivo', it.objetivo);
@@ -781,7 +800,7 @@ function mover(delta) {
 
 function programarPase() {
   clearTimeout(tPase);
-  if (actual().tipo !== 'video') tPase = setTimeout(() => mover(1), PASE_MS);  // los vídeos avanzan al acabar
+  if (actual().tipo === 'foto') tPase = setTimeout(() => mover(1), PASE_MS);  // vídeo y audio avanzan al acabar
 }
 function pararPase() {
   estado.pase = false; clearTimeout(tPase);

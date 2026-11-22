@@ -49,6 +49,9 @@ class ManejadorGaleria(SimpleHTTPRequestHandler):
         ".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/mp4",
         ".webm": "video/webm", ".webp": "image/webp", ".avif": "image/avif",
         ".json": "application/json", ".js": "text/javascript",
+        # Notas de voz de WhatsApp: Opus en contenedor Ogg
+        ".opus": "audio/ogg", ".ogg": "audio/ogg", ".mp3": "audio/mpeg",
+        ".m4a": "audio/mp4", ".aac": "audio/aac", ".wav": "audio/wav",
     }
 
     def log_message(self, formato, *args):   # sin una línea por cada miniatura

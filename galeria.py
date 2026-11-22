@@ -28,6 +28,7 @@ from similares import agrupar, dhash
 
 EXTENSIONES_FOTO = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"}
 EXTENSIONES_VIDEO = {".mp4", ".webm", ".mov", ".m4v"}
+EXTENSIONES_AUDIO = {".opus", ".mp3", ".m4a", ".aac", ".ogg", ".wav"}
 
 VERSION_INDICE = 2
 MINIATURA_ALTO = 400           # las filas de la galería miden ~200 px (x2 en pantallas HiDPI)
@@ -94,6 +95,21 @@ def _metadatos_foto(ruta: Path) -> dict:
     return {"fecha": datos["fecha"], **{c: datos[c] for c in CAMPOS_FOTO}}
 
 
+def _metadatos_audio(ruta: Path, hay_ffmpeg: bool) -> dict:
+    """Fecha del nombre que le dio la importación (AAAAMMDD_HHMMSS) y duración."""
+    from videos import sondear
+    info = (sondear(ruta) if hay_ffmpeg else None) or {}
+    fecha = fecha_desde_nombre(ruta.stem) or info.get("fecha") or fecha_mtime(ruta)
+    return {"fecha": fecha, "duracion": round(info.get("duracion", 0), 1)}
+
+
+def _tipo(ruta: Path) -> str:
+    ext = ruta.suffix.lower()
+    if ext in EXTENSIONES_FOTO:
+        return "foto"
+    return "audio" if ext in EXTENSIONES_AUDIO else "video"
+
+
 def _metadatos_video(ruta: Path, hay_ffmpeg: bool) -> dict:
     from videos import fecha_video, sondear
     info = (sondear(ruta) if hay_ffmpeg else None) or {}
@@ -145,7 +161,7 @@ def _elemento(ruta: Path, carpeta: Path, previos: dict, hay_ffmpeg: bool):
     """(elemento, reutilizado). Reutiliza metadatos y miniatura si el archivo no cambió."""
     rel = ruta.relative_to(carpeta).as_posix()
     st = ruta.stat()
-    tipo = "foto" if ruta.suffix.lower() in EXTENSIONES_FOTO else "video"
+    tipo = _tipo(ruta)
     thumb_rel = f"{CARPETA_GALERIA}/thumbs/{_clave(rel)}.jpg"
     thumb = carpeta / thumb_rel
 
@@ -155,7 +171,9 @@ def _elemento(ruta: Path, carpeta: Path, previos: dict, hay_ffmpeg: bool):
     if reutilizado:
         elemento = dict(previo)
     else:
-        meta = _metadatos_foto(ruta) if tipo == "foto" else _metadatos_video(ruta, hay_ffmpeg)
+        meta = (_metadatos_foto(ruta) if tipo == "foto" else
+                _metadatos_audio(ruta, hay_ffmpeg) if tipo == "audio" else
+                _metadatos_video(ruta, hay_ffmpeg))
         padre = ruta.parent.relative_to(carpeta).as_posix()
         elemento = {
             "tipo": tipo, "src": rel, "nombre": ruta.stem,
@@ -169,7 +187,7 @@ def _elemento(ruta: Path, carpeta: Path, previos: dict, hay_ffmpeg: bool):
         try:
             if tipo == "foto":
                 _miniatura_foto(ruta, thumb)
-            elif hay_ffmpeg:
+            elif tipo == "video" and hay_ffmpeg:
                 _miniatura_video(ruta, thumb, elemento.get("duracion", 0))
         except Exception as exc:
             print(f"  miniatura omitida para {rel}: {exc}")
@@ -191,7 +209,7 @@ def construir_indice(carpeta: Path, regenerar: bool = False, hilos: int = 0):
     catalogo = info_por_destino(carpeta)
     hay_ffmpeg = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
 
-    rutas = listar_archivos(carpeta, EXTENSIONES_FOTO | EXTENSIONES_VIDEO)
+    rutas = listar_archivos(carpeta, EXTENSIONES_FOTO | EXTENSIONES_VIDEO | EXTENSIONES_AUDIO)
     hilos = hilos or min(8, os.cpu_count() or 2)
     with ThreadPoolExecutor(hilos) as pool:
         resultados = list(pool.map(
@@ -228,6 +246,7 @@ def construir_indice(carpeta: Path, regenerar: bool = False, hilos: int = 0):
     stats = {
         "fotos": sum(e["tipo"] == "foto" for e in elementos),
         "videos": sum(e["tipo"] == "video" for e in elementos),
+        "audios": sum(e["tipo"] == "audio" for e in elementos),
         "reutilizados": sum(r for _, r in resultados),
         "miniaturas_borradas": len(huerfanas),
         "videos_sin_miniatura": sum(e["tipo"] == "video" and not e["thumb"]
@@ -274,7 +293,8 @@ def generar_galeria(carpeta: Path, regenerar: bool = False) -> bool:
     _escribir(carpeta / "galeria.html", PLANTILLA.read_text(encoding="utf-8"))
 
     nuevos = len(elementos) - stats["reutilizados"]
-    print(f"Galería generada: {stats['fotos']} foto(s) y {stats['videos']} vídeo(s) "
+    print(f"Galería generada: {stats['fotos']} foto(s), {stats['videos']} vídeo(s) "
+          f"y {stats['audios']} audio(s) "
           f"({nuevos} nuevo(s) o modificado(s), {stats['reutilizados']} sin cambios).")
     if stats["grupos_parecidas"]:
         print(f"Fotos parecidas: {stats['grupos_parecidas']} grupo(s) "
