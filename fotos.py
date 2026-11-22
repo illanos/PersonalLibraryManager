@@ -22,7 +22,7 @@ from media_utils import (
     ruta_temporal, subcarpeta_fecha,
 )
 from metadatos import leer_metadatos, parametros_guardado
-from similares import agrupar, calidad, dhash
+from similares import agrupar, calidad, dhash, es_copia
 
 try:
     from pillow_heif import register_heif_opener
@@ -248,6 +248,13 @@ def _marcar_parecidas(tareas: list, catalogo: Catalogo, origen: Path, omitir: bo
         t = nuevas[c]
         return calidad(*t.dimensiones, t.tamano, t.fuente)
 
+    def fecha_exif(c):
+        if c[0] == "c":
+            f = previas[c]
+            return f["fecha"] if f["fuente_fecha"] == "exif" else None
+        t = nuevas[c]
+        return t.fecha.isoformat() if t.fuente == "exif" else None
+
     for grupo in agrupar(hashes, proporciones):
         mejor = max(grupo, key=lambda c: (puntuacion(c), c[0] == "c"))
         for c in grupo:
@@ -255,7 +262,8 @@ def _marcar_parecidas(tareas: list, catalogo: Catalogo, origen: Path, omitir: bo
                 continue
             t = nuevas[c]
             t.parecidas = [nombre(o) for o in grupo if o != c]
-            if omitir and c != mejor:
+            if omitir and c != mejor and es_copia(hashes[c], hashes[mejor],
+                                                  fecha_exif(c), fecha_exif(mejor)):
                 t.mejor = mejor[1] if mejor[0] == "c" else nuevas[mejor]
 
 

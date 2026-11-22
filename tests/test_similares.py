@@ -112,6 +112,17 @@ class Importacion(CasoConCarpeta):
         stats = self.procesar(omitir_parecidas=True)
         self.assertEqual((stats["procesados"], stats["parecidas_omitidas"]), (0, 1))
 
+    def test_rafaga_se_marca_pero_no_se_omite(self):
+        # Dos tomas casi idénticas, cada una con su fecha EXIF: son fotos distintas
+        escena(self.origen / "Camera" / "PXL_1.jpg", 9, fecha="2025:02:07 19:54:40")
+        escena(self.origen / "Camera" / "PXL_2.jpg", 9, fecha="2025:02:07 19:54:42", calidad=80)
+        stats = self.procesar(omitir_parecidas=True)
+        self.assertEqual((stats["procesados"], stats["parecidas_omitidas"]), (4, 1))
+        filas = {f["origen"].replace("\\", "/").split("/")[-1]: f for f in self.informe()}
+        self.assertIn("PXL_2.jpg", filas["PXL_1.jpg"]["parecidas"])
+        self.assertEqual(filas["PXL_1.jpg"]["accion"], "OK")
+        self.assertEqual(filas["PXL_2.jpg"]["accion"], "OK")
+
     def test_catalogo_antiguo_se_migra(self):
         ruta = ruta_catalogo(self.bib)
         ruta.parent.mkdir(parents=True)

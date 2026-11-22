@@ -15,6 +15,7 @@ from PIL import Image, ImageOps
 
 BITS = 128
 UMBRAL = 12          # bits distintos (de 128) para considerar dos fotos "parecidas"
+UMBRAL_COPIA = 5     # bits como máximo para tratarla como copia (y poder omitirla)
 MIN_DETALLE = 12     # hashes con casi todo 0 o todo 1 (fotos lisas, negras) no se agrupan
 TOLERANCIA_PROPORCION = 0.06
 
@@ -113,6 +114,20 @@ def agrupar(hashes: dict, proporciones: dict = None, umbral: int = UMBRAL) -> li
     for c in claves:
         grupos.setdefault(raiz(c), []).append(c)
     return [g for g in grupos.values() if len(g) > 1]
+
+
+def es_copia(h: str, h_mejor: str, fecha_exif=None, fecha_exif_mejor=None) -> bool:
+    """¿Es `h` una copia recomprimida de la mejor (y no otra toma de una ráfaga)?
+
+    Para *omitir* una foto no basta con que sea parecida: las ráfagas también lo son
+    (1-12 bits de diferencia en fotos reales) y cada toma es distinta. Solo se considera
+    copia si está muy cerca de la mejor (≤ UMBRAL_COPIA bits, lo típico de reenviar por
+    WhatsApp) y no tiene una fecha EXIF propia distinta: una toma de cámara la tiene,
+    una copia de WhatsApp o de Instagram no.
+    """
+    if distancia(h, h_mejor) > UMBRAL_COPIA:
+        return False
+    return fecha_exif is None or fecha_exif == fecha_exif_mejor
 
 
 def calidad(ancho, alto, tamano, fuente: str = "") -> tuple:
