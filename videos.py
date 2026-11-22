@@ -16,6 +16,7 @@ from pathlib import Path
 
 from catalogo import Catalogo, Informe
 from clasificacion import carpeta_destino, categoria
+from danados import RegistroDanados, diagnosticar, problema_de_excepcion
 from media_utils import (
     NOMBRE_ORIGINALES, copiar_atomico, fecha_desde_nombre, fecha_mtime, fecha_y_nombre,
     formato_bytes, hash_archivo,
@@ -270,6 +271,17 @@ def procesar_videos(origen: Path, destino: Path, simular: bool,
           f"máx. {opciones.max_lado or 'sin límite'} px\n")
 
     reservados, vistos = set(), {}
+    danados = RegistroDanados(destino, origen, "videos", simular)
+
+    def danado(ruta, st, problema, detalle, conocido=False):
+        print(f"  DAÑADO     {ruta.relative_to(origen)}  ({problema}: {detalle})")
+        danados.anotar(ruta, problema, detalle, st.st_size, conocido)
+        if not conocido:
+            informe.anotar("DANADO", ruta, detalle=f"{problema}: {detalle}")
+            catalogo.descartar(ruta, st.st_size, st.st_mtime_ns, "video", "danado",
+                               problema, detalle)
+        stats["danados"] += 1
+
     with Catalogo(destino, simular) as catalogo, Informe(destino, "videos", simular) as informe:
         for n, ruta in enumerate(archivos, 1):
             rel = ruta.relative_to(origen)
@@ -280,6 +292,14 @@ def procesar_videos(origen: Path, destino: Path, simular: bool,
                 fila = catalogo.buscar_por_origen(ruta, st)
                 digest = None
                 if fila is None:
+                    descarte = catalogo.buscar_descarte(ruta, st)
+                    if descarte is not None and descarte["motivo"] == "danado":
+                        danado(ruta, st, descarte["problema"], descarte["detalle"], True)
+                        continue
+                    diagnostico = diagnosticar(ruta, st.st_size)
+                    if diagnostico:
+                        danado(ruta, st, *diagnostico)
+                        continue
                     digest = hash_archivo(ruta)
                     fila = catalogo.buscar_por_hash(digest)
                 if fila is not None:
@@ -318,6 +338,10 @@ def procesar_videos(origen: Path, destino: Path, simular: bool,
                 if not ok or not tmp.exists() or tmp.stat().st_size == 0:
                     tmp.unlink(missing_ok=True)
                     detalle = (error or "FFmpeg no generó salida").splitlines()[-1][:300]
+                    problema = problema_de_excepcion(Exception(error or ""))
+                    if problema:
+                        danado(ruta, st, problema, detalle)
+                        continue
                     print(f"{prefijo} ERROR  {rel}: {detalle}")
                     informe.anotar("ERROR", ruta, detalle=detalle)
                     stats["errores"] += 1
@@ -375,4 +399,5 @@ def procesar_videos(origen: Path, destino: Path, simular: bool,
     imprimir_resumen(stats, "vídeos", simular,
                      carpeta_originales if opciones.conservar_originales else None,
                      informe.ruta if informe.filas else None)
+    danados.cerrar()
     return stats

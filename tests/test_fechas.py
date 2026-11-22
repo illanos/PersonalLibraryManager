@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 import videos
+from tests.test_videos import CONTENIDO
 from catalogo import Catalogo
 from fotos import OpcionesFotos, procesar_fotos
 from main import main
@@ -70,7 +71,7 @@ class Importacion(CasoConCarpeta):
     def test_videos_nuevos(self):
         (self.origen / "WhatsApp Video").mkdir()
         video = self.origen / "WhatsApp Video" / "VID-20260121-WA0003.mp4"
-        video.write_bytes(b"v" * 500)
+        video.write_bytes(CONTENIDO)
         poner_mtime(video, datetime(2026, 4, 1))
 
         def codificar(cmd, duracion=0, etiqueta=""):

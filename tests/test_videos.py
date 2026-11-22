@@ -10,6 +10,8 @@ from unittest import mock
 import videos
 from tests.ayudas import CasoConCarpeta
 
+CONTENIDO = b"\x00\x00\x00\x14ftypqt  " + b"v" * 984   # cabecera MOV válida, 1000 bytes
+
 PROBE_IPHONE = {
     "format": {"duration": "12.5", "tags": {
         "creation_time": "2024-05-12T08:20:30.000000Z",
@@ -66,13 +68,13 @@ class Procesamiento(CasoConCarpeta):
         self.origen, self.destino = self.dir / "videos", self.dir / "biblioteca"
         self.origen.mkdir()
         self.video = self.origen / "VID_20240512_102030.mov"
-        self.video.write_bytes(b"v" * 1000)
+        self.video.write_bytes(CONTENIDO)
 
     def procesar(self, bytes_salida=None, ok=True, **opciones):
         def codificar(cmd, duracion=0, etiqueta=""):
             if bytes_salida is not None:
                 Path(cmd[-1]).write_bytes(b"x" * bytes_salida)
-            return ok, "" if ok else "Invalid data found"
+            return ok, "" if ok else "Conversion failed!"
         with mock.patch("videos.sondear", return_value=None), \
                 mock.patch("videos.ejecutar_ffmpeg", side_effect=codificar):
             return videos.procesar_videos(self.origen, self.destino, False,
@@ -81,7 +83,7 @@ class Procesamiento(CasoConCarpeta):
     def test_correcto_no_toca_el_original(self):
         stats = self.procesar(bytes_salida=100)
         self.assertEqual(stats["procesados"], 1)
-        self.assertEqual(self.video.read_bytes(), b"v" * 1000)
+        self.assertEqual(self.video.read_bytes(), CONTENIDO)
         archivos = self.archivos(self.destino)
         self.assertIn("2024/05-Mayo/20240512_102030.mp4", archivos)
         self.assertFalse(any(a.startswith("originales/") for a in archivos))
@@ -114,7 +116,7 @@ class Procesamiento(CasoConCarpeta):
 
     def test_segunda_ejecucion_no_repite(self):
         self.procesar(bytes_salida=100)
-        self.video.write_bytes(b"v" * 1000)   # mismo contenido vuelve a aparecer
+        self.video.write_bytes(CONTENIDO)   # mismo contenido vuelve a aparecer
         stats = self.procesar(bytes_salida=100)
         self.assertEqual((stats["procesados"], stats["ya_importados"]), (0, 1))
 

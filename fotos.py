@@ -15,6 +15,7 @@ from PIL import Image, ImageOps
 
 from catalogo import Catalogo, Informe
 from clasificacion import carpeta_destino, categoria
+from danados import ILEGIBLE, RegistroDanados, diagnosticar, problema_de_excepcion
 from media_utils import (
     NOMBRE_ORIGINALES, copiar_atomico, fecha_desde_nombre, fecha_mtime, fecha_y_nombre, hash_archivo,
     imprimir, imprimir_resumen, listar_archivos, nombre_libre, nuevas_estadisticas,
@@ -117,7 +118,9 @@ def guardar_optimizada(ruta: Path, destino: Path, opciones: OpcionesFotos = None
 @dataclass
 class _Tarea:
     ruta: Path
-    estado: str = "pendiente"      # pendiente | ya_importado | error
+    estado: str = "pendiente"      # pendiente | ya_importado | parecida_conocida | danado | error
+    problema: str = ""           # dañado: vacío | sin cabecera válida | truncado | ilegible
+    conocido: bool = False        # dañado ya anotado en una ejecución anterior
     detalle: str = ""
     tamano: int = 0
     mtime_ns: int = 0
@@ -144,18 +147,32 @@ def _analizar(ruta: Path, catalogo: Catalogo, origen: Path) -> _Tarea:
         t.tamano, t.mtime_ns = st.st_size, st.st_mtime_ns
         # Mismo archivo de una ejecución anterior: ni siquiera hace falta leerlo entero
         fila = catalogo.buscar_por_origen(ruta, st)
-        if fila is None:
-            t.hash = hash_archivo(ruta)
-            fila = catalogo.buscar_por_hash(t.hash)   # mismo contenido, otra ruta
         if fila is not None:
             t.estado, t.detalle = "ya_importado", fila["destino"]
             return t
         descarte = catalogo.buscar_descarte(ruta, st)
+        if descarte is not None and descarte["motivo"] == "danado":
+            t.estado, t.problema, t.detalle = "danado", descarte["problema"], descarte["detalle"]
+            t.conocido = True
+            return t
         if (descarte is not None and descarte["motivo"] == "parecida" and descarte["referencia"]
                 and (catalogo.biblioteca / descarte["referencia"]).exists()):
             t.estado, t.detalle = "parecida_conocida", descarte["referencia"]
             return t
-        datos = leer_metadatos(ruta, completo=False)
+        diagnostico = diagnosticar(ruta, st.st_size, imagen=True)
+        if diagnostico:
+            t.estado, (t.problema, t.detalle) = "danado", diagnostico
+            return t
+        t.hash = hash_archivo(ruta)
+        fila = catalogo.buscar_por_hash(t.hash)   # mismo contenido, otra ruta
+        if fila is not None:
+            t.estado, t.detalle = "ya_importado", fila["destino"]
+            return t
+        try:
+            datos = leer_metadatos(ruta, completo=False)
+        except Exception as exc:
+            t.estado, t.problema, t.detalle = "danado", problema_de_excepcion(exc) or ILEGIBLE, str(exc)
+            return t
         t.fecha, t.fuente, t.base = fecha_y_nombre(ruta, datos["fecha"], datos["fuente"])
         t.dimensiones = (datos["ancho"], datos["alto"])
         t.animado = datos["animado"]
@@ -267,6 +284,7 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
           f"{formato_pil}, calidad {opciones.calidad}, "
           f"máx. {opciones.max_lado or 'sin límite'} px — {hilos} hilo(s)\n")
 
+    danados = RegistroDanados(destino, origen, "fotos", simular)
     with Catalogo(destino, simular) as catalogo, \
             Informe(destino, "fotos", simular) as informe, \
             ThreadPoolExecutor(hilos) as pool:
@@ -285,6 +303,9 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
                     continue
                 if t.estado == "parecida_conocida":
                     stats["parecidas_omitidas"] += 1
+                    continue
+                if t.estado == "danado":
+                    _anotar_danado(t, rel, danados, catalogo, informe, stats)
                     continue
                 if t.estado == "error":
                     imprimir(f"  ERROR      {rel}: {t.detalle}")
@@ -343,6 +364,11 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
                 try:
                     accion = futuro.result()
                 except Exception as exc:
+                    problema = problema_de_excepcion(exc)
+                    if problema:
+                        t.estado, t.problema, t.detalle = "danado", problema, str(exc)
+                        _anotar_danado(t, rel, danados, catalogo, informe, stats)
+                        continue
                     imprimir(f"{prefijo} ERROR {rel}: {exc}")
                     informe.anotar("ERROR", t.ruta, detalle=str(exc))
                     stats["errores"] += 1
@@ -376,4 +402,15 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
     imprimir_resumen(stats, "fotos", simular,
                      carpeta_originales if opciones.conservar_originales else None,
                      informe.ruta if informe.filas else None)
+    danados.cerrar()
     return stats
+
+
+def _anotar_danado(t: _Tarea, rel, danados: RegistroDanados, catalogo: Catalogo,
+                   informe: Informe, stats: dict):
+    imprimir(f"  DAÑADO     {rel}  ({t.problema}{': ' + t.detalle if t.detalle else ''})")
+    danados.anotar(t.ruta, t.problema, t.detalle, t.tamano, t.conocido)
+    if not t.conocido:
+        informe.anotar("DANADO", t.ruta, detalle=f"{t.problema}: {t.detalle}")
+        catalogo.descartar(t.ruta, t.tamano, t.mtime_ns, "foto", "danado", t.problema, t.detalle)
+    stats["danados"] += 1
