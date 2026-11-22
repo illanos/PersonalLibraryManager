@@ -2,109 +2,168 @@
 
 ## Qué es
 
-Conjunto de herramientas en Python para **organizar, renombrar y optimizar** bibliotecas
-personales de fotos y vídeos, más una **galería web local** para explorar el resultado.
+Herramientas en Python para **importar, organizar, renombrar y optimizar** bibliotecas
+personales de fotos y vídeos, más una **galería web local** para explorarlas y buscar por
+etiquetas, personas, cámara o fecha.
+
+Pensado para usarse una y otra vez sobre la misma biblioteca: cada importación solo procesa
+lo nuevo.
 
 ## Estructura del proyecto
 
 ```
 Exportador/
-├── main.py           Punto de entrada (CLI con subcomandos)
-├── media_utils.py    Utilidades compartidas (hash, nombres libres, carpetas, resumen)
-├── fotos.py          Módulo de fotos (EXIF, redimensionado, JPEG optimizado)
-├── videos.py         Módulo de vídeos (ffprobe, recodificación FFmpeg)
-├── galeria.py        Galería web local (índice JSON, miniaturas, HTML+JS)
-├── ARQUITECTURA.md   Este documento
-└── .gitignore
-```
-
-## Módulos
-
-| Módulo | Responsabilidad |
-|---|---|
-| `main.py` | CLI. Subcomandos `fotos`, `videos` y `galeria`. Valida rutas y dependencias. |
-| `media_utils.py` | Código común: hash MD5 para duplicados, nombres sin colisión (`_01`, `_02`…), carpetas `Año/Mes`, listado de archivos y resumen final. |
-| `fotos.py` | Lee la fecha desde EXIF (`DateTimeOriginal` → `DateTime` → mtime), corrige la orientación, reduce a máx. 2560 px y guarda en JPEG calidad 88. |
-| `videos.py` | Lee fecha/dimensiones con `ffprobe`, recodifica con FFmpeg a H.264/MP4 o VP9/WebM con CRF, y conserva el original si la recompresión no reduce tamaño. |
-| `galeria.py` | Escanea una carpeta ya organizada, genera miniaturas (Pillow para fotos, FFmpeg para vídeos) y crea `galeria.html` + `galeria.json`. |
-
-## Decisiones de diseño
-
-- **Fuente de la fecha**: metadatos primero (EXIF en fotos, `creation_time` en vídeos);
-  si faltan, fecha de modificación del archivo. El nombre final es
-  `AAAAMMDD_HHMMSS.ext`, con sufijos `_01`, `_02`… si hay colisión.
-- **Duplicados**: hash MD5 del contenido. Dos archivos idénticos aunque cambie el nombre
-  se detectan; solo queda una copia.
-- **Originales aparte**: en fotos se copian a `originales/`; en vídeos se **mueven**
-  (mover evita duplicar gigabytes). Nada se destruye sin copia.
-- **Red de seguridad en vídeos**: si FFmpeg falla, el original se restaura; si el
-  resultado pesa igual o más, se conserva el original tal cual.
-- **Formatos**: fotos siempre JPEG (universal); vídeos H.264/MP4 por defecto
-  (compatibilidad total) o VP9/WebM (`--codec vp9`, libre de patentes).
-- **Calidad constante (CRF)** en vídeo, no bitrate fijo: escenas estáticas no desperdician
-  espacio.
-
-## Flujo de datos
-
-```
-Carpeta origen ──► main.py fotos/videos ──► Destino_organizados/
-                                            ├── 2024/05-Mayo/*.jpg
-                                            ├── 2024/06-Junio/*.mp4
-                                            ├── originales/
-                                            └── galeria.html + galeria.json + _galeria/thumbs
+├── main.py                 Punto de entrada (CLI: fotos, videos, todo, galeria)
+├── media_utils.py          Utilidades comunes (fechas, nombres, listado, resumen)
+├── catalogo.py             Catálogo SQLite de lo importado + informe CSV
+├── metadatos.py            Lectura y conservación de metadatos de fotos (EXIF/XMP/IPTC)
+├── fotos.py                Importación de fotos (Pillow, en paralelo)
+├── videos.py               Importación de vídeos (ffprobe + FFmpeg)
+├── galeria.py              Índice de la galería y miniaturas
+├── galeria_plantilla.html  Interfaz web (HTML + JS sin dependencias)
+├── servidor.py             Servidor local de la galería
+├── tests/                  Pruebas automáticas (unittest)
+├── requirements.txt
+└── ARQUITECTURA.md         Este documento
 ```
 
 ## Instalación
 
 ```powershell
 # Python 3.10+ desde python.org (marcar "Add to PATH")
-pip install Pillow
+pip install -r requirements.txt
 # FFmpeg para vídeos y miniaturas de vídeo:
 winget install Gyan.FFmpeg
 ```
 
-## Ejemplos de uso
+`pillow-heif` (en `requirements.txt`) es opcional: sin él las fotos HEIC del iPhone se omiten
+con un aviso.
+
+## Uso
 
 ```powershell
-# 1. Previsualizar qué haría el organizador de fotos (no toca nada)
-python main.py fotos "C:\Users\Tu\Pictures\MisFotos" --simular
+# Todo de una vez: fotos + vídeos + galería. Primero en simulación (no toca nada):
+python main.py todo "C:\Users\Tu\Pictures\Movil" --simular
+python main.py todo "C:\Users\Tu\Pictures\Movil" --servir
 
-# 2. Ejecutar de verdad (crea C:\...\MisFotos_organizados)
-python main.py fotos "C:\Users\Tu\Pictures\MisFotos"
-
-# 3. Previsualizar y luego comprimir vídeos a Full HD con H.264
-python main.py videos "C:\Users\Tu\Videos" --simular
-python main.py videos "C:\Users\Tu\Videos"
-
-# 4. Vídeos en formato libre WebM (VP9), conservando hasta 1440p
-python main.py videos "C:\Users\Tu\Videos" --codec vp9 --max-lado 2560
-
-# 5. Generar la galería web y abrirla en el navegador
-python main.py galeria "C:\Users\Tu\Pictures\MisFotos_organizados" --servir
-python main.py galeria "C:\Users\Tu\Pictures\MisFotos_organizados" --servir --puerto 9000
-
-# 5b. Solo generarla sin servidor (servirla después manualmente):
-#     cd carpeta && python -m http.server 8080
-python main.py galeria "C:\Users\Tu\Pictures\MisFotos_organizados"
+# Por partes
+python main.py fotos  "C:\Users\Tu\Pictures\Movil" --destino "D:\Biblioteca"
+python main.py videos "C:\Users\Tu\Videos" --destino "D:\Biblioteca" --codec h265
+python main.py galeria "D:\Biblioteca" --servir
 ```
 
-### La galería web
+Opciones principales (`python main.py <comando> -h` para verlas todas):
 
-`python main.py galeria <carpeta> --servir` levanta un servidor local
-(`http://127.0.0.1:<puerto>/galeria.html`; solo accesible desde tu equipo) y abre el
-navegador. La página es HTML+JavaScript puro, sin frameworks ni conexión a internet:
+| Opción | Comando | Qué hace |
+|---|---|---|
+| `--destino` | fotos, videos, todo | Biblioteca destino (por defecto `<origen>_organizados`) |
+| `--simular` | fotos, videos, todo | Muestra qué haría sin crear, mover ni modificar nada |
+| `--max-lado` | fotos, todo | Lado largo máximo de las fotos (2560; `0` = no reducir) |
+| `--calidad` | fotos, todo | Calidad de compresión 1-100 (88) |
+| `--formato jpeg\|webp` | fotos, todo | WebP pesa ~30 % menos |
+| `--sin-originales` | fotos, todo | No guarda copia de las fotos originales |
+| `--hilos N` | fotos, todo | Fotos en paralelo (por defecto, según núcleos) |
+| `--codec h264\|h265\|vp9` | videos, todo | MP4 universal, MP4 más ligero o WebM libre |
+| `--max-lado-video` | videos, todo | Lado largo máximo de los vídeos (1920; en `videos` también `--max-lado`) |
+| `--crf`, `--preset` | videos, todo | Calidad constante y velocidad de codificación |
+| `--servir`, `--puerto` | galeria, todo | Abre la galería en el navegador |
+| `--regenerar` | galeria | Rehace metadatos y miniaturas aunque no hayan cambiado |
 
-- **Buscador** por nombre de archivo, fecha o carpeta.
-- **Filtros** Todas / Fotos / Vídeos.
-- **Rejilla estilo mosaico** con miniaturas ligeras y carga diferida (*lazy loading*).
-- **Visor a pantalla completa** con navegación por flechas del teclado o botones,
-  reproducción de vídeo con controles nativos y cierre con `Esc`.
+## Resultado
 
-Importante: la galería debe verse **por HTTP** (con `--servir` o `http.server`); si se
-abre el HTML con doble clic, el navegador bloquea el `fetch` del índice y las imágenes.
+```
+Biblioteca/
+├── 2024/08-Agosto/20240810_190211.jpg     fotos y vídeos optimizados, por fecha de captura
+├── originales/2024/08-Agosto/IMG_0101.JPG copia intacta del original
+├── .exportador/catalogo.sqlite            qué se importó, de dónde y con qué resultado
+├── .exportador/informes/fotos_*.csv       una fila por archivo y ejecución (abre en Excel)
+├── galeria.html + galeria.json            galería web
+└── _galeria/thumbs, _galeria/favoritos.json
+```
+
+## Decisiones de diseño
+
+- **Fecha de captura**: fotos `EXIF DateTimeOriginal → DateTimeDigitized → DateTime`;
+  vídeos `creationdate de Apple (hora local) → creation_time (UTC, se pasa a hora local)`.
+  Si faltan, se deduce del nombre (`IMG_20240512_102030`, WhatsApp `IMG-20240512-WA0001`,
+  capturas…) y, en último caso, de la fecha del archivo. El informe y `--simular` dicen de
+  dónde salió cada fecha; en la galería, las que vienen del archivo se marcan como
+  *Fecha dudosa*.
+- **Nombre final** `AAAAMMDD_HHMMSS.ext`; las ráfagas del mismo segundo reciben `_01`, `_02`…
+  en orden cronológico y de nombre original.
+- **Importación incremental**: el catálogo guarda el MD5 de cada archivo importado. Lo ya
+  importado (misma ruta, tamaño y fecha, o mismo contenido en otra ruta) se salta sin
+  reprocesar. Si borras un archivo de la biblioteca, la siguiente importación lo vuelve a
+  traer: el catálogo nunca hace perder fotos.
+- **Nada se destruye**: los duplicados se dejan en el origen; las fotos se copian (el origen
+  queda intacto) y se guarda otra copia en `originales/`; los vídeos se mueven a
+  `originales/` solo cuando la versión nueva está terminada.
+- **Escritura atómica**: todo se escribe primero como `.part` y se renombra al final. Si se
+  interrumpe (Ctrl+C, apagón), no quedan archivos a medias y basta con volver a ejecutar.
+- **Si recomprimir no compensa** (la salida pesaría más) se conserva el original tal cual.
+- **Vídeos verticales**: el escalado lo calcula FFmpeg sobre la imagen ya girada; usar las
+  dimensiones de ffprobe (sin girar) deformaba los vídeos de móvil.
+- **Calidad constante (CRF)** en vídeo, no bitrate fijo: escenas estáticas no desperdician espacio.
+
+## Metadatos
+
+Al exportar una foto se conservan (ver `metadatos.py`):
+
+| Metadato | Contiene | JPEG | WebP |
+|---|---|---|---|
+| EXIF | fecha, cámara, objetivo, exposición, GPS, etiquetas/título de Windows | ✅ | ✅ |
+| XMP | etiquetas, valoración ★, título, descripción, personas (Lightroom, digiKam, Windows, Google…) | ✅ | ✅ |
+| IPTC | palabras clave, pie de foto, autor | ✅ | ❌ (aviso) |
+| ICC | perfil de color (Display P3 de móviles) | ✅ | ✅ |
+| Comentario JPEG | | ✅ | — |
+
+La rotación se aplica a los píxeles y la orientación se marca como normal en EXIF **y** XMP,
+para que ningún visor la gire dos veces. Lo único que se descarta es la miniatura EXIF
+interna y los mapas de profundidad/ganancia HDR. La fecha de modificación de la foto
+exportada se pone igual a la de captura, así el explorador de archivos ordena igual que la
+galería. En vídeo se copian los metadatos del contenedor (`-map_metadata 0` y, en MP4,
+`use_metadata_tags`, que mantiene fecha local, cámara y ubicación del iPhone).
+
+Para añadir etiquetas propias basta con cualquier programa que escriba XMP/IPTC/EXIF: el
+Explorador de Windows (*Propiedades → Detalles → Etiquetas*), Lightroom, digiKam, Fotos…
+Se conservan al exportar y aparecen en la galería al regenerarla.
+
+## La galería web
+
+`python main.py galeria <biblioteca> --servir` levanta un servidor en
+`http://127.0.0.1:<puerto>/galeria.html` (solo accesible desde tu equipo) y abre el navegador.
+
+- **Línea de tiempo** por meses, con filas justificadas y carga por lotes (miles de fotos).
+- **Etiquetas**: panel con contadores agrupado en *Etiquetas*, *Personas*, *Cámaras* y
+  *Automáticas* (Selfies, Capturas de pantalla, WhatsApp, Con ubicación, Con estrellas,
+  Verticales, Panorámicas, Fecha dudosa). Los filtros se combinan entre sí.
+- **Buscador** en nombre, fecha, mes, carpeta, cámara, etiquetas, personas, título,
+  descripción y nombre original. Filtros por tipo, año, favoritos y orden.
+- **Visor**: flechas o gestos, presentación (`P`), pantalla completa (`F`), favorito (`S`),
+  ficha de información (`I`) con todos los metadatos, enlace al mapa y al original.
+  Cada foto tiene su propio enlace (`galeria.html#ruta`), y el botón *Atrás* cierra el visor.
+- **Favoritos** guardados en `_galeria/favoritos.json` (o en el navegador si se sirve con
+  otro servidor).
+
+Regenerar es incremental: lo que no ha cambiado reutiliza metadatos y miniatura.
+
+El servidor admite peticiones parciales (para saltar en los vídeos y para Safari), rechaza
+cabeceras `Host` que no sean locales (protección frente a *DNS rebinding*) y, si el puerto
+está ocupado, prueba los siguientes. Abrir el HTML con doble clic no funciona: el navegador
+bloquea la lectura de `galeria.json` desde `file://`.
+
+## Pruebas
+
+```powershell
+python -m unittest
+```
+
+Los tests de vídeo simulan ffprobe y FFmpeg, así que no necesitan tenerlos instalados.
 
 ## Posibles ampliaciones
 
-- Soporte HEIC instalando `pillow-heif`.
-- Informe CSV de las operaciones realizadas.
-- Regenerar la galería incrementalmente (detectar cambios por fecha de modificación).
+- Editar etiquetas desde la galería y escribirlas en el XMP de la foto.
+- Búsqueda por línea de comandos (`main.py buscar --etiqueta playa --copiar-a ...`).
+- Mapa con las fotos geolocalizadas y nombre del lugar (requiere conexión).
+- Detección de fotos casi iguales (ráfagas) con hash perceptual.
+- Compartir la galería en la red local (con contraseña) para verla en el móvil o la tele.

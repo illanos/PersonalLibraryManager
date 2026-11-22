@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 .venv/
+# Restos del antiguo _smoke_test.py
+_prueba/
+_prueba_organizados/

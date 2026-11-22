@@ -1,0 +1,5 @@
+Pillow>=11.0
+# Opcional: fotos HEIC/HEIF del iPhone
+pillow-heif>=0.16
+# FFmpeg (vídeos y miniaturas de vídeo) no es un paquete de Python:
+#   winget install Gyan.FFmpeg
