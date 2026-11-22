@@ -84,7 +84,7 @@ Opciones principales (`python main.py <comando> -h` para verlas todas):
 | `--simular` | todos menos galeria | Muestra qué haría sin crear, mover ni modificar nada |
 | `--con-originales` | fotos, videos, todo | Guarda además una copia intacta de cada original en `originales/` |
 | `--renombrar-aproximadas` | fotos, videos, audio, todo | Renombra también lo ya importado como `AAAAMMDD_000000` (ver *Fechas aproximadas*) |
-| `--max-lado` | fotos, todo | Lado largo máximo de las fotos (2560; `0` = no reducir) |
+| `--max-lado` | fotos, todo | Lado largo máximo de las fotos (3200; `0` = no reducir) |
 | `--calidad` | fotos, todo | Calidad de compresión 1-100 (88) |
 | `--formato jpeg\|webp` | fotos, todo | WebP pesa ~30 % menos |
 | `--hilos N` | fotos, todo | Fotos en paralelo (por defecto, según núcleos) |

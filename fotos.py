@@ -41,7 +41,7 @@ FORMATOS = {
     "webp": ("WEBP", ".webp", {".webp"}),
 }
 
-MAX_LADO = 2560   # píxeles máximos en el lado largo (0 = no redimensionar)
+MAX_LADO = 3200   # píxeles máximos en el lado largo (0 = no redimensionar)
 CALIDAD = 88      # 80-92 = buen equilibrio calidad/peso
 
 @dataclass

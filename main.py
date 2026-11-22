@@ -66,8 +66,8 @@ def construir_parser() -> argparse.ArgumentParser:
 
     op_fotos = argparse.ArgumentParser(add_help=False)
     g = op_fotos.add_argument_group("fotos")
-    g.add_argument("--max-lado", dest="max_lado_fotos", type=_positivo, default=2560,
-                   help="Lado largo máximo de las fotos en px (0 = no reducir; por defecto 2560)")
+    g.add_argument("--max-lado", dest="max_lado_fotos", type=_positivo, default=3200,
+                   help="Lado largo máximo de las fotos en px (0 = no reducir; por defecto 3200)")
     g.add_argument("--calidad", type=_calidad, default=88,
                    help="Calidad de compresión 1-100 (por defecto 88)")
     g.add_argument("--formato", choices=["jpeg", "webp"], default="jpeg",

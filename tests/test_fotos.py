@@ -58,7 +58,7 @@ class Exportacion(CasoConCarpeta):
         destino = self.dir / "b.jpg"
         self.assertEqual(guardar_optimizada(origen, destino), [])
         with Image.open(destino) as im:
-            self.assertEqual(im.size, (1920, 2560))          # girada y reducida
+            self.assertEqual(im.size, (2400, 3200))          # girada y reducida
             exif = im.getexif()
             self.assertIn(exif.get(274), (None, 1))          # sin doble giro
             self.assertEqual(exif.get_ifd(0x8769)[36867], "2023:08:15 20:31:07")
