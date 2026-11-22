@@ -1,4 +1,6 @@
 __pycache__/
+# Datos descargados una vez (ciudades de GeoNames, modelos de caras)
+datos/
 *.pyc
 .venv/
 # Restos del antiguo _smoke_test.py

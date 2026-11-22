@@ -24,6 +24,7 @@ from pathlib import Path
 from catalogo import info_por_destino
 from media_utils import CARPETA_GALERIA, fecha_desde_nombre, fecha_mtime, listar_archivos
 from clasificacion import RE_CAPTURA, ambito, es_pegatina
+import lugares
 from similares import agrupar, dhash
 
 EXTENSIONES_FOTO = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"}
@@ -279,7 +280,7 @@ def _escribir(ruta: Path, texto: str):
     os.replace(tmp, ruta)
 
 
-def generar_galeria(carpeta: Path, regenerar: bool = False) -> bool:
+def generar_galeria(carpeta: Path, regenerar: bool = False, caras: bool = False) -> bool:
     print(f"Explorando {carpeta} …")
     elementos, stats = construir_indice(carpeta, regenerar)
 
@@ -287,7 +288,28 @@ def generar_galeria(carpeta: Path, regenerar: bool = False) -> bool:
         print("No se encontraron fotos ni vídeos para la galería.")
         return False
 
-    indice = {"version": VERSION_INDICE, "titulo": carpeta.name, "elementos": elementos}
+    avisos = []
+    geo = lugares.cargar()
+    if geo:
+        nuevos = lugares.asignar_lugares(elementos, geo)
+        if nuevos:
+            print(f"Lugares: {nuevos} elemento(s) con GPS localizados (sin conexión).")
+    elif any(e.get("gps") for e in elementos):
+        avisos.append("AVISO: sin lugares (nombre de la ciudad a partir del GPS). Para "
+                      "obtenerlos, una sola vez:  python main.py galeria <carpeta> "
+                      "--descargar-lugares")
+    if caras:
+        from caras import aplicar_caras
+        analizadas, aviso = aplicar_caras(carpeta, elementos)
+        if aviso:
+            avisos.append(aviso)
+        if analizadas:
+            print(f"Caras: {analizadas} foto(s) analizadas ahora "
+                  "(el resto, de ejecuciones anteriores).")
+
+    from caras import leer_nombres
+    indice = {"version": VERSION_INDICE, "titulo": carpeta.name, "elementos": elementos,
+              "nombres_caras": leer_nombres(carpeta)}
     _escribir(carpeta / "galeria.json",
               json.dumps(indice, ensure_ascii=False, separators=(",", ":")))
     _escribir(carpeta / "galeria.html", PLANTILLA.read_text(encoding="utf-8"))
@@ -299,6 +321,8 @@ def generar_galeria(carpeta: Path, regenerar: bool = False) -> bool:
     if stats["grupos_parecidas"]:
         print(f"Fotos parecidas: {stats['grupos_parecidas']} grupo(s) "
               "(filtro «Parecidas» en la galería; no se ha borrado nada).")
+    for aviso in avisos:
+        print(aviso)
     if stats["videos_sin_miniatura"] and not stats["hay_ffmpeg"]:
         print(f"AVISO: {stats['videos_sin_miniatura']} vídeo(s) sin miniatura: "
               "instala FFmpeg para generarlas.")

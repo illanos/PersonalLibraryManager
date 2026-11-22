@@ -134,6 +134,8 @@ def reorganizar(biblioteca: Path, simular: bool = False, whatsapp: bool = False,
                                 bytes=st.st_size, mtime=int(st.st_mtime))
 
     if cambios and not simular:
+        from caras import renombrar_en_cache
+        renombrar_en_cache(biblioteca, cambios)
         if indice:
             _escribir_json(indice_ruta, indice, separators=(",", ":"))
         if favoritos:

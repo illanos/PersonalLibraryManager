@@ -7,7 +7,7 @@ Uso:
     python main.py videos  <origen> [--destino DEST] [--simular] [opciones de vídeo]
     python main.py audio   <origen> [--destino DEST] [--simular]
     python main.py todo    <origen> [--destino DEST] [--simular] [--servir] [--sin-audio]
-    python main.py galeria <carpeta> [--servir] [--puerto N] [--regenerar]
+    python main.py galeria <carpeta> [--servir] [--puerto N] [--regenerar] [--caras]
     python main.py reorganizar <biblioteca> [--whatsapp] [--fechas-aproximadas] [--simular]
 
 Ejemplos:
@@ -107,6 +107,15 @@ def construir_parser() -> argparse.ArgumentParser:
                    help="Puerto del servidor local (por defecto 8080; si está ocupado, el siguiente)")
     g.add_argument("--sin-navegador", action="store_true",
                    help="Con --servir, no abrir el navegador automáticamente")
+    g.add_argument("--caras", action="store_true",
+                   help="Detectar y agrupar caras para nombrarlas en la galería (local; "
+                        "requiere pip install opencv-python). Solo analiza lo nuevo")
+    g.add_argument("--descargar-lugares", action="store_true",
+                   help="Descargar una vez las ciudades de GeoNames (~3 MB) para mostrar el "
+                        "lugar de las fotos con GPS sin conexión")
+    g.add_argument("--descargar-modelos-caras", action="store_true",
+                   help="Descargar una vez los modelos YuNet/SFace de OpenCV Zoo (~38 MB) "
+                        "para agrupar bien las caras")
 
     sub.add_parser("fotos", parents=[comun, op_fotos], help="Organizar y optimizar fotos")
 
@@ -199,8 +208,14 @@ def opciones_videos(args):
 def galeria(carpeta: Path, args, regenerar: bool = False):
     if not hay_pillow():
         sys.exit(MENSAJE_PILLOW)
+    if args.descargar_lugares:
+        from lugares import descargar_lugares
+        descargar_lugares()
+    if args.descargar_modelos_caras:
+        from caras import descargar_modelos
+        descargar_modelos()
     from galeria import generar_galeria
-    if generar_galeria(carpeta, regenerar) and args.servir:
+    if generar_galeria(carpeta, regenerar, caras=args.caras) and args.servir:
         from servidor import servir
         servir(carpeta, args.puerto, abrir_navegador=not args.sin_navegador)
 

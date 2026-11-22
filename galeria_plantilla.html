@@ -151,6 +151,12 @@
                   cursor: pointer; width: 64px; height: 64px; overflow: hidden; }
   .minis button.actual { border-color: var(--acento); }
   .minis img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .cara { display: inline-block; border-radius: 50%; background-repeat: no-repeat; background-color: var(--panel2);
+          vertical-align: middle; flex-shrink: 0; }
+  .minis.caras button { width: auto; height: auto; display: flex; flex-direction: column; align-items: center;
+                        gap: 2px; padding: 4px; background: none; color: var(--tenue); }
+  .minis.caras small { font-size: .72rem; max-width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .etq.con-cara { display: inline-flex; align-items: center; gap: 6px; padding-left: 4px; }
 </style>
 </head>
 <body>
@@ -217,8 +223,9 @@ const CLAVE_FAVS = 'galeria-favoritos:' + location.pathname;
 const CLAVE_TAMANO = 'galeria-tamano';
 const CLAVE_PANEL = 'galeria-panel-etiquetas';
 const MAX_VISIBLES = 40;          // etiquetas por grupo antes de "+N más"
-const GRUPOS = [['etiqueta', 'Etiquetas'], ['persona', 'Personas'],
-                ['camara', 'Cámaras'], ['auto', 'Automáticas']];
+const GRUPOS = [['etiqueta', 'Etiquetas'], ['persona', 'Personas'], ['cara', 'Caras sin nombre'],
+                ['lugar', 'Lugares'], ['pais', 'Países'], ['camara', 'Cámaras'], ['auto', 'Automáticas']];
+const MIN_FOTOS_CARA = 2;         // grupos de caras sin nombre con al menos estas fotos
 const etiquetas = new Map();      // clave -> { clave, grupo, texto, n }
 const gruposParecidas = new Map(); // número de grupo -> fotos casi idénticas
 
@@ -228,6 +235,7 @@ const estado = {
   ocultar: { '': false, whatsapp: false },   // capturas | pegatinas, según la vista
   activas: new Set(),           // filtros de etiqueta activos ("grupo:valor")
   favs: new Set(), favsEnServidor: false,
+  nombresCaras: {},             // grupo de caras -> nombre (se edita desde el visor)
   indice: 0, pase: false, empujado: false,
 };
 
@@ -282,23 +290,10 @@ async function cargar() {
   const lista = Array.isArray(datos) ? datos : (datos.elementos || []);
   estado.titulo = datos.titulo || 'Galería';
   if (datos.titulo) { $('titulo').textContent = datos.titulo; document.title = datos.titulo + ' · Galería'; }
-  estado.items = lista.map(it => {
-    const f = fecha(it);
-    it._busqueda = normalizar([
-      it.nombre, it.fecha.replace('T', ' '), isNaN(f) ? '' : fmtMes.format(f), it.carpeta,
-      it.tipo === 'video' ? 'video' : it.tipo === 'audio' ? 'audio nota de voz' : 'foto', it.camara, it.objetivo, it.titulo, it.descripcion,
-      it.autor, it.nombre_original, ...(it.etiquetas || []), ...(it.personas || []), ...(it.auto || []),
-    ].filter(Boolean).join(' '));
-    it._claves = new Set();
-    clavesDe(it).forEach(([grupo, texto]) => {
-      const clave = claveDe(grupo, texto);
-      it._claves.add(clave);
-      const e = etiquetas.get(clave) || { clave, grupo, texto, n: {} };
-      const a = it.ambito || '';
-      e.n[a] = (e.n[a] || 0) + 1; etiquetas.set(clave, e);
-    });
-    return it;
-  });
+  estado.items = lista;
+  estado.nombresCaras = datos.nombres_caras || {};
+  await cargarNombresCaras();
+  indexar();
   estado.items.sort((a, b) => a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0);
   estado.items.forEach(it => {
     if (!it.parecidas) return;
@@ -332,6 +327,77 @@ function rellenarAnios() {
   Object.keys(cuenta).sort().reverse().forEach(a => sel.add(new Option(`${a} (${fmtNum.format(cuenta[a])})`, a)));
 }
 
+/* ---------- Índice de búsqueda y etiquetas ---------- */
+function personasDe(it) {
+  const nombres = (it.caras || []).map(c => estado.nombresCaras[c[0]]).filter(Boolean);
+  return [...new Set([...(it.personas || []), ...nombres])];
+}
+
+function indexar() {
+  etiquetas.clear();
+  const fotosPorCara = {};
+  estado.items.forEach(it => new Set((it.caras || []).map(c => c[0]))
+    .forEach(g => { fotosPorCara[g] = (fotosPorCara[g] || 0) + 1; }));
+  estado.items.forEach(it => {
+    const f = fecha(it);
+    it._personas = personasDe(it);
+    it._busqueda = normalizar([
+      it.nombre, it.fecha.replace('T', ' '), isNaN(f) ? '' : fmtMes.format(f), it.carpeta,
+      it.tipo === 'video' ? 'video' : it.tipo === 'audio' ? 'audio nota de voz' : 'foto', it.camara,
+      it.objetivo, it.titulo, it.descripcion, it.autor, it.nombre_original, it.lugar, it.region, it.pais,
+      ...(it.etiquetas || []), ...it._personas, ...(it.auto || []),
+    ].filter(Boolean).join(' '));
+    it._claves = new Set();
+    clavesDe(it, fotosPorCara).forEach(([grupo, texto, muestra]) => {
+      const clave = claveDe(grupo, texto);
+      if (it._claves.has(clave)) return;
+      it._claves.add(clave);
+      const e = etiquetas.get(clave) || { clave, grupo, texto, n: {} };
+      if (muestra && !e.muestra) e.muestra = { it, caja: muestra };
+      const a = it.ambito || '';
+      e.n[a] = (e.n[a] || 0) + 1; etiquetas.set(clave, e);
+    });
+  });
+}
+
+async function cargarNombresCaras() {
+  try {
+    const r = await fetch('api/caras', { cache: 'no-store' });
+    if (r.ok) { const d = await r.json(); if (d && typeof d === 'object') estado.nombresCaras = d; }
+  } catch (_) {}
+}
+
+/* Recorte de una cara sobre la miniatura (sin generar más archivos) */
+function recorteCara(it, caja, lado = 56) {
+  const [, x, y, w, h] = caja;
+  const el = document.createElement('span'); el.className = 'cara';
+  el.style.width = el.style.height = lado + 'px';
+  el.style.backgroundImage = `url("${ruta(it.thumb || it.src)}")`;
+  el.style.backgroundSize = `${100 / w}% ${100 / h}%`;
+  el.style.backgroundPosition = `${w < 1 ? x / (1 - w) * 100 : 0}% ${h < 1 ? y / (1 - h) * 100 : 0}%`;
+  return el;
+}
+
+async function nombrarCara(grupo) {
+  const previo = estado.nombresCaras[grupo] || '';
+  const nombre = prompt('¿Quién es? (vacío para quitar el nombre; el mismo nombre en dos grupos los une)', previo);
+  if (nombre === null) return;
+  try {
+    const r = await fetch('api/caras', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                         body: JSON.stringify({ grupo: String(grupo), nombre }) });
+    if (!r.ok) throw new Error(r.status);
+    estado.nombresCaras = await r.json();
+  } catch (_) {
+    avisar('No se pudo guardar el nombre: abre la galería con «python main.py galeria … --servir».');
+    return;
+  }
+  indexar();
+  pintarPanelEtiquetas();
+  actualizarActivas();
+  if (!visor.hidden) pintarDatos(actual());
+  avisar(nombre.trim() ? `Guardado: ${nombre.trim()}` : 'Nombre quitado');
+}
+
 /* ---------- Filtros ---------- */
 function aplicar() {
   const texto = normalizar($('busqueda').value.trim());
@@ -346,7 +412,7 @@ function aplicar() {
     return palabras.every(p => it._busqueda.includes(p));
   });
   if (estado.asc) estado.filtrados.reverse();
-  const total = estado.items.length, n = estado.filtrados.length;
+  const total = enAmbito().length, n = estado.filtrados.length;   // WhatsApp no cuenta fuera de su vista
   $('contador').textContent = n === total ? `${fmtNum.format(total)} elementos`
                                           : `${fmtNum.format(n)} de ${fmtNum.format(total)}`;
   reiniciarRejilla();
@@ -461,10 +527,16 @@ rejilla.addEventListener('keydown', e => {
 });
 
 /* ---------- Etiquetas ---------- */
-function clavesDe(it) {
+function clavesDe(it, fotosPorCara = {}) {
   const c = [];
   (it.etiquetas || []).forEach(v => c.push(['etiqueta', v]));
-  (it.personas || []).forEach(v => c.push(['persona', v]));
+  (it._personas || it.personas || []).forEach(v => c.push(['persona', v]));
+  (it.caras || []).forEach(cara => {
+    if (!estado.nombresCaras[cara[0]] && fotosPorCara[cara[0]] >= MIN_FOTOS_CARA)
+      c.push(['cara', 'Cara ' + cara[0], cara]);
+  });
+  if (it.lugar) c.push(['lugar', it.lugar]);
+  if (it.pais) c.push(['pais', it.pais]);
   if (it.camara) c.push(['camara', it.camara]);
   (it.auto || []).forEach(v => c.push(['auto', v]));
   return c;
@@ -474,6 +546,7 @@ function claveDe(grupo, texto) { return grupo + ':' + normalizar(String(texto));
 function botonEtiqueta(e) {
   const b = document.createElement('button');
   b.className = 'etq'; b.dataset.clave = e.clave; b.textContent = e.texto;
+  if (e.muestra) { b.prepend(recorteCara(e.muestra.it, e.muestra.caja, 22)); b.classList.add('con-cara'); }
   const n = document.createElement('span'); n.textContent = fmtNum.format(cuenta(e)); b.append(n);
   b.addEventListener('click', () => alternarEtiqueta(e.clave));
   return b;
@@ -730,7 +803,20 @@ function pintarDatos(it) {
     s.setAttribute('aria-label', it.valoracion + ' de 5'); fila('Valoración', s);
   }
   fila('Etiquetas', chips('etiqueta', it.etiquetas));
-  fila('Personas', chips('persona', it.personas));
+  fila('Personas', chips('persona', it._personas));
+  if (it.caras && it.caras.length) {
+    const cont = document.createElement('div'); cont.className = 'minis caras';
+    it.caras.forEach(caja => {
+      const b = document.createElement('button');
+      const nombre = estado.nombresCaras[caja[0]];
+      b.title = nombre ? `${nombre} · clic para cambiar el nombre` : 'Sin nombre · clic para nombrar';
+      b.append(recorteCara(it, caja, 60));
+      const t = document.createElement('small'); t.textContent = nombre || 'Nombrar'; b.append(t);
+      b.addEventListener('click', () => nombrarCara(caja[0]));
+      cont.append(b);
+    });
+    fila('Caras', cont);
+  }
   fila('Archivo', archivo);
   if (it.nombre_original && it.nombre_original !== archivo) fila('Nombre original', it.nombre_original);
   fila('Dimensiones', it.ancho && it.alto ? `${it.ancho} × ${it.alto} px` +
@@ -742,6 +828,12 @@ function pintarDatos(it) {
   fila('Exposición', it.exposicion);
   fila('Autor', it.autor);
   fila('Carpeta', it.carpeta);
+  if (it.lugar) {
+    const cont = chips('lugar', [it.lugar]);
+    const extra = [it.region, it.pais].filter(Boolean).join(', ');
+    if (extra) { const s = document.createElement('span'); s.textContent = ' ' + extra; cont.append(s); }
+    fila('Lugar', cont);
+  }
   if (it.gps) {
     const [lat, lon] = it.gps;
     fila('Ubicación', enlace(`${lat.toFixed(5)}, ${lon.toFixed(5)} · ver en el mapa`,

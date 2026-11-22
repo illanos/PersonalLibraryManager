@@ -25,6 +25,7 @@ from urllib.parse import urlsplit
 from media_utils import CARPETA_GALERIA
 
 RUTA_API_FAVORITOS = "/api/favoritos"
+RUTA_API_CARAS = "/api/caras"        # nombres de los grupos de caras: {grupo: nombre}
 MAX_CUERPO = 5 * 1024 * 1024
 TAM_BLOQUE = 256 * 1024
 _RE_RANGO = re.compile(r"bytes=(\d*)-(\d*)")
@@ -88,6 +89,9 @@ class ManejadorGaleria(SimpleHTTPRequestHandler):
             return self.send_error(HTTPStatus.FORBIDDEN, "Host no permitido")
         if self._ruta_peticion() == RUTA_API_FAVORITOS:
             return self._responder_json(HTTPStatus.OK, self._leer_favoritos())
+        if self._ruta_peticion() == RUTA_API_CARAS:
+            from caras import leer_nombres
+            return self._responder_json(HTTPStatus.OK, leer_nombres(Path(self.directory)))
         rango = self.headers.get("Range")
         if rango and self._servir_rango(rango):
             return
@@ -145,7 +149,7 @@ class ManejadorGaleria(SimpleHTTPRequestHandler):
     def do_POST(self):
         if not self._host_valido() or not self._origen_valido():
             return self.send_error(HTTPStatus.FORBIDDEN, "Origen no permitido")
-        if self._ruta_peticion() != RUTA_API_FAVORITOS:
+        if self._ruta_peticion() not in (RUTA_API_FAVORITOS, RUTA_API_CARAS):
             return self.send_error(HTTPStatus.NOT_FOUND)
         # Exigir JSON obliga al navegador a pedir permiso (CORS) a otras webs
         if "application/json" not in self.headers.get("Content-Type", ""):
@@ -160,6 +164,8 @@ class ManejadorGaleria(SimpleHTTPRequestHandler):
             datos = json.loads(self.rfile.read(longitud))
         except ValueError:
             return self.send_error(HTTPStatus.BAD_REQUEST, "JSON no válido")
+        if self._ruta_peticion() == RUTA_API_CARAS:
+            return self._guardar_nombre_cara(datos)
         if not isinstance(datos, list) or not all(isinstance(x, str) for x in datos):
             return self.send_error(HTTPStatus.BAD_REQUEST, "Se esperaba una lista de rutas")
 
@@ -172,6 +178,27 @@ class ManejadorGaleria(SimpleHTTPRequestHandler):
                            encoding="utf-8")
             os.replace(tmp, ruta)
         self._responder_json(HTTPStatus.OK, {"ok": True, "total": len(favoritos)})
+
+    def _guardar_nombre_cara(self, datos):
+        """{"grupo": "12", "nombre": "Ana"}; nombre vacío = quitar el nombre."""
+        from caras import leer_nombres, ruta_nombres
+        grupo = str(datos.get("grupo", "")) if isinstance(datos, dict) else ""
+        nombre = datos.get("nombre") if isinstance(datos, dict) else None
+        if not grupo.isdigit() or not isinstance(nombre, str) or len(nombre) > 120:
+            return self.send_error(HTTPStatus.BAD_REQUEST, "Se esperaba {grupo, nombre}")
+        carpeta = Path(self.directory)
+        with self._lock_favoritos:
+            nombres = leer_nombres(carpeta)
+            if nombre.strip():
+                nombres[grupo] = nombre.strip()
+            else:
+                nombres.pop(grupo, None)
+            ruta = ruta_nombres(carpeta)
+            ruta.parent.mkdir(parents=True, exist_ok=True)
+            tmp = ruta.with_name(ruta.name + ".part")
+            tmp.write_text(json.dumps(nombres, ensure_ascii=False, indent=1), encoding="utf-8")
+            os.replace(tmp, ruta)
+        self._responder_json(HTTPStatus.OK, nombres)
 
     def _responder_json(self, estado, datos):
         cuerpo = json.dumps(datos, ensure_ascii=False).encode("utf-8")
