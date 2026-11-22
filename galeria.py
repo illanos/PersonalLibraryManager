@@ -23,6 +23,7 @@ from pathlib import Path
 
 from catalogo import info_por_destino
 from media_utils import CARPETA_GALERIA, fecha_desde_nombre, fecha_mtime, listar_archivos
+from clasificacion import RE_CAPTURA, ambito, es_pegatina
 from similares import agrupar, dhash
 
 EXTENSIONES_FOTO = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"}
@@ -104,17 +105,20 @@ def _metadatos_video(ruta: Path, hay_ffmpeg: bool) -> dict:
 
 # Etiquetas automáticas: casi ninguna foto de móvil trae etiquetas propias, pero
 # sus metadatos permiten agruparlas igualmente.
-_RE_CAPTURA = re.compile(r"screen[ _-]?shot|screenrecord|captura|pantallazo", re.IGNORECASE)
 _RE_WHATSAPP = re.compile(r"-WA\d{4}|whatsapp", re.IGNORECASE)
 
 
 def etiquetas_automaticas(e: dict) -> list:
     nombres = f"{e.get('nombre_original', '')} {e.get('nombre', '')}"
     ancho, alto = e.get("ancho") or 0, e.get("alto") or 0
+    pegatina = e.get("tipo", "foto") == "foto" and any(
+        es_pegatina(n, ancho, alto) for n in (e.get("src", ""), e.get("nombre_original", ""))
+        if n) or "/Pegatinas/" in f"/{e.get('src', '')}"
     reglas = [
         ("Selfies", re.search(r"front|frontal|selfie", e.get("objetivo", ""), re.IGNORECASE)),
-        ("Capturas de pantalla", _RE_CAPTURA.search(nombres)),
-        ("WhatsApp", _RE_WHATSAPP.search(nombres)),
+        ("Capturas", RE_CAPTURA.search(nombres)),
+        ("WhatsApp", e.get("ambito") == "whatsapp" or _RE_WHATSAPP.search(nombres)),
+        ("Pegatinas", pegatina),
         ("Con ubicación", e.get("gps")),
         ("Con estrellas", e.get("valoracion")),
         ("Verticales", alto > ancho * 1.1 > 0),
@@ -196,9 +200,12 @@ def construir_indice(carpeta: Path, regenerar: bool = False, hilos: int = 0):
 
     elementos = []
     for elemento, _ in resultados:
-        for clave in ("original", "nombre_original", "fuente_fecha", "auto"):
+        for clave in ("original", "nombre_original", "fuente_fecha", "auto", "ambito"):
             elemento.pop(clave, None)
         info = catalogo.get(elemento["src"], {})
+        # WhatsApp va aparte: la galería solo lo muestra en su propia vista
+        if ambito(elemento["src"], info.get("origen") or ""):
+            elemento["ambito"] = "whatsapp"
         if info.get("original") and (carpeta / info["original"]).exists():
             elemento["original"] = info["original"]
         if info.get("origen"):

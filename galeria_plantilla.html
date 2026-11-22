@@ -159,6 +159,9 @@
     <button class="chip" data-tipo="video">Vídeos</button>
     <button class="chip" data-tipo="fav">★ Favoritos</button>
   </div>
+  <button id="btn-whatsapp" class="chip" aria-pressed="false"
+          title="El contenido de WhatsApp va aparte: no se mezcla con la línea de tiempo">WhatsApp</button>
+  <button id="btn-ocultar" class="chip" aria-pressed="false">Ocultar capturas</button>
   <select id="anio" aria-label="Año"><option value="">Todos los años</option></select>
   <button id="btn-etiquetas" class="chip" aria-expanded="false" aria-controls="filtros">Etiquetas</button>
   <button id="orden" class="chip" title="Cambiar el orden">Recientes primero</button>
@@ -216,6 +219,8 @@ const gruposParecidas = new Map(); // número de grupo -> fotos casi idénticas
 
 const estado = {
   items: [], filtrados: [], tipo: '', anio: '', asc: false,
+  ambito: '',                   // '' = línea de tiempo | 'whatsapp' = solo WhatsApp (vista aparte)
+  ocultar: { '': false, whatsapp: false },   // capturas | pegatinas, según la vista
   activas: new Set(),           // filtros de etiqueta activos ("grupo:valor")
   favs: new Set(), favsEnServidor: false,
   indice: 0, pase: false, empujado: false,
@@ -268,6 +273,7 @@ async function cargar() {
     return;
   }
   const lista = Array.isArray(datos) ? datos : (datos.elementos || []);
+  estado.titulo = datos.titulo || 'Galería';
   if (datos.titulo) { $('titulo').textContent = datos.titulo; document.title = datos.titulo + ' · Galería'; }
   estado.items = lista.map(it => {
     const f = fecha(it);
@@ -280,8 +286,9 @@ async function cargar() {
     clavesDe(it).forEach(([grupo, texto]) => {
       const clave = claveDe(grupo, texto);
       it._claves.add(clave);
-      const e = etiquetas.get(clave) || { clave, grupo, texto, n: 0 };
-      e.n++; etiquetas.set(clave, e);
+      const e = etiquetas.get(clave) || { clave, grupo, texto, n: {} };
+      const a = it.ambito || '';
+      e.n[a] = (e.n[a] || 0) + 1; etiquetas.set(clave, e);
     });
     return it;
   });
@@ -292,12 +299,16 @@ async function cargar() {
     g.push(it); gruposParecidas.set(it.parecidas, g);
   });
   await cargarFavoritos();
+  $('btn-whatsapp').hidden = !estado.items.some(it => it.ambito === 'whatsapp');
+  pintarOcultar();
   rellenarAnios();
   pintarPanelEtiquetas();
   try { if (localStorage.getItem(CLAVE_PANEL) === '1') alternarPanelEtiquetas(); } catch (_) {}
   aplicar();
   const enlace = decodeURIComponent(location.hash.slice(1));
   if (enlace) {
+    const destino = estado.items.find(it => it.src === enlace);
+    if (destino && (destino.ambito || '') !== estado.ambito) cambiarAmbito(destino.ambito || '');
     const i = estado.filtrados.findIndex(it => it.src === enlace);
     if (i >= 0) abrirVisor(i, false);
   }
@@ -305,8 +316,11 @@ async function cargar() {
 
 function rellenarAnios() {
   const cuenta = {};
-  estado.items.forEach(it => { const a = it.fecha.slice(0, 4); cuenta[a] = (cuenta[a] || 0) + 1; });
+  enAmbito().forEach(it => { const a = it.fecha.slice(0, 4); cuenta[a] = (cuenta[a] || 0) + 1; });
   const sel = $('anio');
+  while (sel.options.length > 1) sel.remove(1);
+  if (estado.anio && !cuenta[estado.anio]) estado.anio = '';
+  sel.value = estado.anio;
   Object.keys(cuenta).sort().reverse().forEach(a => sel.add(new Option(`${a} (${fmtNum.format(cuenta[a])})`, a)));
 }
 
@@ -317,6 +331,8 @@ function aplicar() {
   estado.filtrados = estado.items.filter(it => {
     if (estado.tipo === 'fav') { if (!estado.favs.has(it.src)) return false; }
     else if (estado.tipo && it.tipo !== estado.tipo) return false;
+    if ((it.ambito || '') !== estado.ambito) return false;
+    if (estado.ocultar[estado.ambito] && it._claves.has(claveOcultable())) return false;
     if (estado.anio && !it.fecha.startsWith(estado.anio)) return false;
     for (const clave of estado.activas) if (!it._claves.has(clave)) return false;
     return palabras.every(p => it._busqueda.includes(p));
@@ -447,14 +463,14 @@ function claveDe(grupo, texto) { return grupo + ':' + normalizar(String(texto));
 function botonEtiqueta(e) {
   const b = document.createElement('button');
   b.className = 'etq'; b.dataset.clave = e.clave; b.textContent = e.texto;
-  const n = document.createElement('span'); n.textContent = fmtNum.format(e.n); b.append(n);
+  const n = document.createElement('span'); n.textContent = fmtNum.format(cuenta(e)); b.append(n);
   b.addEventListener('click', () => alternarEtiqueta(e.clave));
   return b;
 }
 
 function pintarPanelEtiquetas() {
   const panel = $('filtros'); panel.replaceChildren();
-  const todas = [...etiquetas.values()];
+  const todas = [...etiquetas.values()].filter(e => cuenta(e) > 0);
   if (!todas.some(e => e.grupo === 'etiqueta' || e.grupo === 'persona')) {
     const p = document.createElement('p'); p.className = 'pista';
     p.textContent = 'Estas fotos aún no tienen etiquetas propias. Puedes añadirlas en el Explorador de ' +
@@ -464,7 +480,7 @@ function pintarPanelEtiquetas() {
   }
   GRUPOS.forEach(([grupo, titulo]) => {
     const lista = todas.filter(e => e.grupo === grupo)
-      .sort((a, b) => b.n - a.n || a.texto.localeCompare(b.texto, 'es'));
+      .sort((a, b) => cuenta(b) - cuenta(a) || a.texto.localeCompare(b.texto, 'es'));
     if (!lista.length) return;
     const sec = document.createElement('div'); sec.className = 'grupo';
     const h = document.createElement('h3'); h.textContent = titulo;
@@ -530,6 +546,47 @@ function filtrarPor(clave) {
 }
 
 $('btn-etiquetas').addEventListener('click', alternarPanelEtiquetas);
+
+/* ---------- WhatsApp: vista aparte ---------- */
+const CLAVE_OCULTAR = 'galeria-ocultar';
+function cuenta(e) { return e.n[estado.ambito] || 0; }
+function enAmbito() { return estado.items.filter(it => (it.ambito || '') === estado.ambito); }
+function claveOcultable() { return claveDe('auto', estado.ambito ? 'Pegatinas' : 'Capturas'); }
+
+function cambiarAmbito(ambito) {
+  estado.ambito = ambito;
+  estado.activas.clear();
+  const wa = ambito === 'whatsapp';
+  $('btn-whatsapp').classList.toggle('activo', wa);
+  $('btn-whatsapp').setAttribute('aria-pressed', String(wa));
+  $('btn-whatsapp').textContent = wa ? '← Volver a la línea de tiempo' : 'WhatsApp';
+  const titulo = estado.titulo + (wa ? ' · WhatsApp' : '');
+  $('titulo').textContent = titulo;
+  pintarOcultar();
+  rellenarAnios();
+  pintarPanelEtiquetas();
+  actualizarActivas();
+}
+
+function pintarOcultar() {
+  const b = $('btn-ocultar'), activo = estado.ocultar[estado.ambito];
+  b.textContent = estado.ambito ? 'Ocultar pegatinas' : 'Ocultar capturas';
+  b.classList.toggle('activo', activo);
+  b.setAttribute('aria-pressed', String(activo));
+}
+
+$('btn-whatsapp').addEventListener('click', () => {
+  cambiarAmbito(estado.ambito ? '' : 'whatsapp');
+  aplicar();
+  scrollTo({ top: 0 });
+});
+$('btn-ocultar').addEventListener('click', () => {
+  estado.ocultar[estado.ambito] = !estado.ocultar[estado.ambito];
+  try { localStorage.setItem(CLAVE_OCULTAR, JSON.stringify(estado.ocultar)); } catch (_) {}
+  pintarOcultar();
+  aplicar();
+});
+try { Object.assign(estado.ocultar, JSON.parse(localStorage.getItem(CLAVE_OCULTAR) || '{}')); } catch (_) {}
 
 /* ---------- Favoritos ---------- */
 async function cargarFavoritos() {

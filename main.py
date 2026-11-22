@@ -7,6 +7,7 @@ Uso:
     python main.py videos  <origen> [--destino DEST] [--simular] [opciones de vídeo]
     python main.py todo    <origen> [--destino DEST] [--simular] [--servir]
     python main.py galeria <carpeta> [--servir] [--puerto N] [--regenerar]
+    python main.py reorganizar <biblioteca> [--whatsapp] [--fechas-aproximadas] [--simular]
 
 Ejemplos:
     python main.py todo   "C:\\Users\\Tu\\Pictures\\Movil" --simular
@@ -55,6 +56,9 @@ def construir_parser() -> argparse.ArgumentParser:
     comun.add_argument("--con-originales", action="store_true",
                        help="Guardar además una copia intacta de cada original en "
                             "originales/ (el origen nunca se toca)")
+    comun.add_argument("--renombrar-aproximadas", action="store_true",
+                       help="Renombrar también lo YA importado con nombre AAAAMMDD_000000 "
+                            "(fecha sacada del nombre sin hora); solo dentro de la biblioteca")
     # Compatibilidad: no copiar los originales es ya el comportamiento por defecto
     comun.add_argument("--sin-originales", action="store_true", help=argparse.SUPPRESS)
 
@@ -71,6 +75,9 @@ def construir_parser() -> argparse.ArgumentParser:
     g.add_argument("--omitir-parecidas", action="store_true",
                    help="No importar la peor copia de cada grupo de fotos casi idénticas "
                         "(p. ej. WhatsApp Sent/ e Images/). Nada se borra del origen")
+    g.add_argument("--pegatinas-aparte", action="store_true",
+                   help="Pegatinas de WhatsApp en WhatsApp/Pegatinas/ en vez de con el resto "
+                        "de WhatsApp (que ya va siempre separado, en WhatsApp/)")
 
     op_videos = argparse.ArgumentParser(add_help=False)
     g = op_videos.add_argument_group("vídeos")
@@ -106,6 +113,21 @@ def construir_parser() -> argparse.ArgumentParser:
                             help="Fotos + vídeos + galería en un solo paso")
     p_todo.add_argument("--sin-galeria", action="store_true",
                         help="No generar la galería al terminar")
+
+    p_reo = sub.add_parser(
+        "reorganizar", help="Ordenar una biblioteca ya importada (solo dentro de ella)",
+        description="Mueve o renombra archivos ya importados, solo dentro de la biblioteca, "
+                    "y actualiza catálogo, galería y favoritos. El origen no se toca.")
+    p_reo.add_argument("biblioteca", type=Path, help="Biblioteca ya organizada")
+    p_reo.add_argument("--whatsapp", action="store_true",
+                       help="Separar en WhatsApp/ lo de WhatsApp importado mezclado con el resto")
+    p_reo.add_argument("--fechas-aproximadas", action="store_true",
+                       help="Renombrar AAAAMMDD_000000 (fecha del nombre sin hora) con la hora "
+                            "del archivo si es del mismo día, o como AAAAMMDD_WA0011")
+    p_reo.add_argument("--pegatinas-aparte", action="store_true",
+                       help="Con --whatsapp, las pegatinas a WhatsApp/Pegatinas/")
+    p_reo.add_argument("--simular", action="store_true",
+                       help="Muestra qué movería sin tocar nada")
 
     p_gal = sub.add_parser("galeria", parents=[servir],
                            help="Generar (y servir) la galería web local")
@@ -149,7 +171,8 @@ def opciones_fotos(args):
     from fotos import OpcionesFotos
     return OpcionesFotos(max_lado=args.max_lado_fotos, calidad=args.calidad,
                          formato=args.formato, conservar_originales=args.con_originales,
-                         hilos=args.hilos, omitir_parecidas=args.omitir_parecidas)
+                         hilos=args.hilos, omitir_parecidas=args.omitir_parecidas,
+                         pegatinas_aparte=args.pegatinas_aparte)
 
 
 def opciones_videos(args):
@@ -171,6 +194,17 @@ def galeria(carpeta: Path, args, regenerar: bool = False):
 def main(argv=None):
     configurar_consola()
     args = construir_parser().parse_args(argv)
+
+    if args.comando == "reorganizar":
+        biblioteca = args.biblioteca.resolve()
+        if not biblioteca.is_dir():
+            sys.exit(f"La carpeta no existe: {biblioteca}")
+        if not (args.whatsapp or args.fechas_aproximadas):
+            sys.exit("Indica qué reorganizar: --whatsapp y/o --fechas-aproximadas")
+        from reorganizar import reorganizar
+        reorganizar(biblioteca, args.simular, whatsapp=args.whatsapp,
+                    fechas=args.fechas_aproximadas, pegatinas_aparte=args.pegatinas_aparte)
+        return
 
     if args.comando == "galeria":
         carpeta = args.carpeta.resolve()
@@ -197,6 +231,10 @@ def main(argv=None):
         else:
             print("\nAVISO: se omiten los vídeos porque FFmpeg no está instalado "
                   "(winget install Gyan.FFmpeg).")
+
+    if args.renombrar_aproximadas and (destino / ".exportador").exists():
+        from reorganizar import reorganizar
+        reorganizar(destino, args.simular, fechas=True)
 
     if args.comando == "todo" and not args.simular and not args.sin_galeria:
         print()

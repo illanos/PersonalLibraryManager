@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from catalogo import Catalogo, Informe
+from clasificacion import carpeta_destino, categoria
 from media_utils import (
     NOMBRE_ORIGINALES, copiar_atomico, fecha_desde_nombre, fecha_mtime, formato_bytes, hash_archivo,
     imprimir_resumen, listar_archivos, nombre_libre, nuevas_estadisticas,
@@ -291,7 +292,8 @@ def procesar_videos(origen: Path, destino: Path, simular: bool,
 
                 info = sondear(ruta) or {}
                 fecha, fuente = fecha_video(ruta, info)
-                carpeta_rel = subcarpeta_fecha(fecha)
+                cat = categoria(rel)
+                carpeta_rel = carpeta_destino(fecha, "" if cat == "captura" else cat, "video")
                 base = fecha.strftime("%Y%m%d_%H%M%S")
                 destino_video = nombre_libre(destino / carpeta_rel, base, perfil["ext"],
                                              reservados)

@@ -31,7 +31,7 @@ class Indice(CasoConCarpeta):
         self.assertIn("Selfies", foto["auto"])
         self.assertIn("Con ubicación", foto["auto"])
         captura = por_nombre["Screenshot_20240305-101112.jpg"]
-        self.assertEqual(set(captura["auto"]), {"Capturas de pantalla", "Verticales"})
+        self.assertEqual(set(captura["auto"]), {"Capturas", "Verticales"})
         for e in datos["elementos"]:
             self.assertTrue((self.bib / e["thumb"]).exists())
         self.assertTrue((self.bib / "galeria.html").exists())

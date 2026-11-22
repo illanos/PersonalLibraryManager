@@ -159,6 +159,53 @@ def fecha_desde_nombre(nombre: str):
     return None
 
 
+FORMATO_NOMBRE = "%Y%m%d_%H%M%S"
+_RE_CONTADOR_WA = re.compile(r"-(WA\d+)", re.IGNORECASE)
+
+
+def nombre_tiene_hora(nombre: str) -> bool:
+    """¿El nombre trae fecha *y hora* (IMG_20240512_102030) y no solo fecha (IMG-20240512-WA0001)?"""
+    for m in _RE_FECHA_HORA.finditer(nombre):
+        try:
+            if fecha_plausible(datetime(*(int(g) for g in m.groups()))):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _sufijo_legible(stem: str) -> str:
+    m = _RE_CONTADOR_WA.search(stem)
+    if m:
+        return m.group(1).upper()
+    sin_fecha = _RE_FECHA.sub("", stem)
+    limpio = re.sub(r"[^0-9A-Za-z]+", "-", sin_fecha).strip("-")[:24]
+    return limpio or "sinhora"
+
+
+def fecha_aproximada(ruta: Path, fecha: datetime, mtime: datetime = None):
+    """Fecha deducida de un nombre *sin hora* (WhatsApp): (fecha, fuente, base_del_nombre).
+
+    - Si la fecha de modificación del archivo es del mismo día, se toma su hora
+      (fuente 'nombre+hora_archivo'): 20260121_183012.
+    - Si no, la fecha se queda a las 00:00 y el nombre lo dice claramente en vez de
+      inventar una hora: 20260121_WA0011 (o 20260121_<resto del nombre>).
+    """
+    mtime = mtime or fecha_mtime(ruta)
+    if mtime.date() == fecha.date():
+        return mtime.replace(microsecond=0), "nombre+hora_archivo", mtime.strftime(FORMATO_NOMBRE)
+    return fecha, "nombre", f"{fecha:%Y%m%d}_{_sufijo_legible(Path(ruta).stem)}"
+
+
+def fecha_y_nombre(ruta: Path, fecha: datetime, fuente: str):
+    """(fecha, fuente, base) para un archivo nuevo. Solo cambia las fechas sacadas del
+    nombre sin hora; el resto se nombra AAAAMMDD_HHMMSS como siempre."""
+    if (fuente == "nombre" and fecha.time() == datetime.min.time()
+            and not nombre_tiene_hora(Path(ruta).stem)):
+        return fecha_aproximada(ruta, fecha)
+    return fecha, fuente, fecha.strftime(FORMATO_NOMBRE)
+
+
 _RE_ISO = re.compile(
     r"^\s*(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:[.,]\d+)?\s*"
     r"(Z|[+-]\d{2}:?\d{2})?\s*$", re.IGNORECASE)

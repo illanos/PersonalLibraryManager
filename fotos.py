@@ -14,6 +14,7 @@ from pathlib import Path
 from PIL import Image, ImageOps
 
 from catalogo import Catalogo, Informe
+from clasificacion import carpeta_destino, categoria
 from media_utils import (
     NOMBRE_ORIGINALES, copiar_atomico, fecha_desde_nombre, fecha_mtime, hash_archivo,
     imprimir, imprimir_resumen, listar_archivos, nombre_libre, nuevas_estadisticas,
@@ -50,6 +51,7 @@ class OpcionesFotos:
     conservar_originales: bool = False   # copia extra en originales/ (el origen nunca se toca)
     hilos: int = 0          # 0 = automático
     omitir_parecidas: bool = False   # no importar la peor copia de un grupo de parecidas
+    pegatinas_aparte: bool = False   # pegatinas en WhatsApp/Pegatinas/ en vez de con el resto
 
 
 # ----------------------------- Fecha -----------------------------
@@ -130,9 +132,10 @@ class _Tarea:
     phash: str = None
     parecidas: list = None     # otras fotos del mismo grupo (para el informe)
     mejor: object = None       # con omitir_parecidas: la copia que se queda (tarea o destino)
+    categoria: str = ""        # whatsapp | pegatina | captura | '' (ver clasificacion.py)
 
 
-def _analizar(ruta: Path, catalogo: Catalogo) -> _Tarea:
+def _analizar(ruta: Path, catalogo: Catalogo, origen: Path) -> _Tarea:
     """Fase 1 (en paralelo): ¿ya importada? hash, fecha y propiedades."""
     t = _Tarea(ruta)
     try:
@@ -155,6 +158,7 @@ def _analizar(ruta: Path, catalogo: Catalogo) -> _Tarea:
         t.fecha, t.fuente = datos["fecha"], datos["fuente"]
         t.dimensiones = (datos["ancho"], datos["alto"])
         t.animado = datos["animado"]
+        t.categoria = categoria(ruta.relative_to(origen), *t.dimensiones)
         try:
             t.phash = dhash(ruta)
         except Exception:
@@ -171,6 +175,9 @@ def _ejecutar(t: _Tarea, opciones: OpcionesFotos, extensiones_mismo_formato: set
         if t.animado:
             copiar_atomico(t.ruta, t.destino)   # GIF/WebP animados: no perder la animación
             accion = "COPIADO_ANIMADO"
+        elif t.categoria == "pegatina":
+            copiar_atomico(t.ruta, t.destino)   # WebP pequeño con transparencia: tal cual
+            accion = "PEGATINA"
         else:
             t.avisos = guardar_optimizada(t.ruta, t.destino, opciones)
             sin_redimensionar = not opciones.max_lado or max(t.dimensiones) <= opciones.max_lado
@@ -264,7 +271,7 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
             ThreadPoolExecutor(hilos) as pool:
         try:
             # Fase 1: análisis en paralelo
-            tareas = list(pool.map(lambda r: _analizar(r, catalogo), archivos))
+            tareas = list(pool.map(lambda r: _analizar(r, catalogo, origen), archivos))
 
             # Fase 2: duplicados y nombres, en orden cronológico (ráfagas -> _01, _02...)
             reservados, vistos, pendientes, omitidas = set(), {}, [], []
@@ -296,8 +303,10 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
                 if t.mejor is not None:
                     omitidas.append(t)
                     continue
-                carpeta_rel = subcarpeta_fecha(t.fecha)
-                ext = t.ruta.suffix.lower() if t.animado else ext_salida
+                carpeta_rel = carpeta_destino(t.fecha, t.categoria, "foto",
+                                              opciones.pegatinas_aparte)
+                tal_cual = t.animado or t.categoria == "pegatina"
+                ext = t.ruta.suffix.lower() if tal_cual else ext_salida
                 t.destino = nombre_libre(destino / carpeta_rel,
                                          t.fecha.strftime("%Y%m%d_%H%M%S"), ext, reservados)
                 if opciones.conservar_originales:
@@ -349,7 +358,7 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
                                t.tamano, despues, "; ".join(t.avisos or []),
                                ", ".join(t.parecidas or []))
                 etiqueta = {"OK": "OK", "SIN_CAMBIOS": "SIN CAMBIOS",
-                            "COPIADO_ANIMADO": "ANIMADA"}[accion]
+                            "COPIADO_ANIMADO": "ANIMADA", "PEGATINA": "PEGATINA"}[accion]
                 imprimir(f"{prefijo} {etiqueta}  {rel}  ->  {destino_rel}")
                 for aviso in t.avisos or []:
                     imprimir(f"      aviso: {aviso}")

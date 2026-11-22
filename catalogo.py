@@ -167,12 +167,15 @@ class Catalogo:
             self._db.execute("DELETE FROM descartes WHERE origen = ?", (str(ruta),))
             self._db.commit()
 
-    def cambiar_destino(self, viejo: str, nuevo: str):
+    def cambiar_destino(self, viejo: str, nuevo: str, fecha: str = None, fuente: str = None):
         """Tras mover/renombrar un archivo dentro de la biblioteca."""
         if self.simular:
             return
         with self._lock:
-            self._db.execute("UPDATE archivos SET destino = ? WHERE destino = ?", (nuevo, viejo))
+            self._db.execute(
+                "UPDATE archivos SET destino = ?, fecha = COALESCE(?, fecha), "
+                "fuente_fecha = COALESCE(?, fuente_fecha) WHERE destino = ?",
+                (nuevo, fecha, fuente, viejo))
             self._db.commit()
 
     def registrar(self, **campos):
