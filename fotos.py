@@ -20,6 +20,7 @@ from media_utils import (
     ruta_temporal, subcarpeta_fecha,
 )
 from metadatos import leer_metadatos, parametros_guardado
+from similares import agrupar, calidad, dhash
 
 try:
     from pillow_heif import register_heif_opener
@@ -48,6 +49,7 @@ class OpcionesFotos:
     formato: str = "jpeg"
     conservar_originales: bool = False   # copia extra en originales/ (el origen nunca se toca)
     hilos: int = 0          # 0 = automático
+    omitir_parecidas: bool = False   # no importar la peor copia de un grupo de parecidas
 
 
 # ----------------------------- Fecha -----------------------------
@@ -125,6 +127,9 @@ class _Tarea:
     destino: Path = None
     original: Path = None
     avisos: list = None
+    phash: str = None
+    parecidas: list = None     # otras fotos del mismo grupo (para el informe)
+    mejor: object = None       # con omitir_parecidas: la copia que se queda (tarea o destino)
 
 
 def _analizar(ruta: Path, catalogo: Catalogo) -> _Tarea:
@@ -141,10 +146,19 @@ def _analizar(ruta: Path, catalogo: Catalogo) -> _Tarea:
         if fila is not None:
             t.estado, t.detalle = "ya_importado", fila["destino"]
             return t
+        descarte = catalogo.buscar_descarte(ruta, st)
+        if (descarte is not None and descarte["motivo"] == "parecida" and descarte["referencia"]
+                and (catalogo.biblioteca / descarte["referencia"]).exists()):
+            t.estado, t.detalle = "parecida_conocida", descarte["referencia"]
+            return t
         datos = leer_metadatos(ruta, completo=False)
         t.fecha, t.fuente = datos["fecha"], datos["fuente"]
         t.dimensiones = (datos["ancho"], datos["alto"])
         t.animado = datos["animado"]
+        try:
+            t.phash = dhash(ruta)
+        except Exception:
+            t.phash = None   # no impide importarla; solo no se compara con otras
     except Exception as exc:
         t.estado, t.detalle = "error", f"no se puede leer: {exc}"
     return t
@@ -176,6 +190,48 @@ def _ejecutar(t: _Tarea, opciones: OpcionesFotos, extensiones_mismo_formato: set
         t.destino.unlink(missing_ok=True)   # no dejar una foto sin su original
         raise
     return accion
+
+
+def _marcar_parecidas(tareas: list, catalogo: Catalogo, origen: Path, omitir: bool):
+    """Agrupa las fotos nuevas parecidas entre sí o a otras ya importadas.
+
+    Rellena `t.parecidas` (para el informe) y, con `omitir`, `t.mejor` en todas las
+    copias nuevas de un grupo salvo la mejor (más píxeles, con EXIF, más bytes).
+    """
+    nuevas, md5_vistos = {}, set()
+    for i, t in enumerate(tareas):
+        if t.estado == "pendiente" and t.phash and t.hash not in md5_vistos:
+            md5_vistos.add(t.hash)
+            nuevas[("n", i)] = t
+    if not nuevas:
+        return
+    previas = {("c", f["destino"]): f for f in catalogo.fotos_con_phash()}
+    hashes = {c: t.phash for c, t in nuevas.items()}
+    hashes.update({c: f["phash"] for c, f in previas.items()})
+    proporciones = {c: t.dimensiones[0] / t.dimensiones[1]
+                    for c, t in nuevas.items() if t.dimensiones[1]}
+    proporciones.update({c: f["ancho"] / f["alto"] for c, f in previas.items()
+                         if f["ancho"] and f["alto"]})
+
+    def nombre(c):
+        return c[1] if c[0] == "c" else nuevas[c].ruta.relative_to(origen).as_posix()
+
+    def puntuacion(c):
+        if c[0] == "c":
+            f = previas[c]
+            return calidad(f["ancho"], f["alto"], f["bytes_antes"], f["fuente_fecha"])
+        t = nuevas[c]
+        return calidad(*t.dimensiones, t.tamano, t.fuente)
+
+    for grupo in agrupar(hashes, proporciones):
+        mejor = max(grupo, key=lambda c: (puntuacion(c), c[0] == "c"))
+        for c in grupo:
+            if c[0] != "n":
+                continue
+            t = nuevas[c]
+            t.parecidas = [nombre(o) for o in grupo if o != c]
+            if omitir and c != mejor:
+                t.mejor = mejor[1] if mejor[0] == "c" else nuevas[mejor]
 
 
 def procesar_fotos(origen: Path, destino: Path, simular: bool,
@@ -211,12 +267,16 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
             tareas = list(pool.map(lambda r: _analizar(r, catalogo), archivos))
 
             # Fase 2: duplicados y nombres, en orden cronológico (ráfagas -> _01, _02...)
-            reservados, vistos, pendientes = set(), {}, []
+            reservados, vistos, pendientes, omitidas = set(), {}, [], []
             tareas.sort(key=lambda t: (t.fecha or datetime.min, str(t.ruta)))
+            _marcar_parecidas(tareas, catalogo, origen, opciones.omitir_parecidas)
             for t in tareas:
                 rel = t.ruta.relative_to(origen)
                 if t.estado == "ya_importado":
                     stats["ya_importados"] += 1
+                    continue
+                if t.estado == "parecida_conocida":
+                    stats["parecidas_omitidas"] += 1
                     continue
                 if t.estado == "error":
                     imprimir(f"  ERROR      {rel}: {t.detalle}")
@@ -231,6 +291,11 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
                     continue
 
                 vistos[t.hash] = rel
+                if t.parecidas:
+                    stats["parecidas"] += 1
+                if t.mejor is not None:
+                    omitidas.append(t)
+                    continue
                 carpeta_rel = subcarpeta_fecha(t.fecha)
                 ext = t.ruta.suffix.lower() if t.animado else ext_salida
                 t.destino = nombre_libre(destino / carpeta_rel,
@@ -244,6 +309,18 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
                     stats["procesados"] += 1
                 else:
                     pendientes.append(t)
+
+            for t in omitidas:
+                rel = t.ruta.relative_to(origen)
+                ref = t.mejor if isinstance(t.mejor, str) else \
+                    t.mejor.destino.relative_to(destino).as_posix()
+                imprimir(f"  PARECIDA   {rel}  (peor copia que {ref}: no se importa)")
+                informe.anotar("PARECIDA_OMITIDA", t.ruta, detalle=f"peor copia que {ref}",
+                               parecidas=", ".join(t.parecidas))
+                catalogo.descartar(t.ruta, t.tamano, t.mtime_ns, "foto", "parecida",
+                                   detalle="peor copia de un grupo de parecidas",
+                                   referencia=ref)
+                stats["parecidas_omitidas"] += 1
 
             # Fase 3: escritura en paralelo
             futuros = {pool.submit(_ejecutar, t, opciones, mismo_formato): t
@@ -266,9 +343,11 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
                     hash=t.hash, tipo="foto", origen=str(t.ruta), tamano=t.tamano,
                     mtime_ns=t.mtime_ns, destino=destino_rel, original=original_rel,
                     fecha=t.fecha.isoformat(), fuente_fecha=t.fuente,
-                    bytes_antes=t.tamano, bytes_despues=despues)
+                    bytes_antes=t.tamano, bytes_despues=despues,
+                    phash=t.phash, ancho=t.dimensiones[0], alto=t.dimensiones[1])
                 informe.anotar(accion, t.ruta, destino_rel, t.fecha, t.fuente,
-                               t.tamano, despues, "; ".join(t.avisos or []))
+                               t.tamano, despues, "; ".join(t.avisos or []),
+                               ", ".join(t.parecidas or []))
                 etiqueta = {"OK": "OK", "SIN_CAMBIOS": "SIN CAMBIOS",
                             "COPIADO_ANIMADO": "ANIMADA"}[accion]
                 imprimir(f"{prefijo} {etiqueta}  {rel}  ->  {destino_rel}")

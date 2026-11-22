@@ -68,6 +68,9 @@ def construir_parser() -> argparse.ArgumentParser:
                    help="jpeg = universal | webp = ~30 %% menos peso (por defecto jpeg)")
     g.add_argument("--hilos", type=_positivo, default=0,
                    help="Fotos en paralelo (por defecto: según los núcleos del equipo)")
+    g.add_argument("--omitir-parecidas", action="store_true",
+                   help="No importar la peor copia de cada grupo de fotos casi idénticas "
+                        "(p. ej. WhatsApp Sent/ e Images/). Nada se borra del origen")
 
     op_videos = argparse.ArgumentParser(add_help=False)
     g = op_videos.add_argument_group("vídeos")
@@ -146,7 +149,7 @@ def opciones_fotos(args):
     from fotos import OpcionesFotos
     return OpcionesFotos(max_lado=args.max_lado_fotos, calidad=args.calidad,
                          formato=args.formato, conservar_originales=args.con_originales,
-                         hilos=args.hilos)
+                         hilos=args.hilos, omitir_parecidas=args.omitir_parecidas)
 
 
 def opciones_videos(args):

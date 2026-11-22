@@ -139,6 +139,14 @@
            background: var(--panel2); border: 1px solid var(--borde); padding: 10px 16px; border-radius: 10px;
            opacity: 0; pointer-events: none; transition: all .25s; max-width: calc(100% - 32px); }
   #aviso.visible { opacity: 1; transform: translateX(-50%); }
+  #v-parecidas { background: rgba(255,200,61,.16); border: 1px solid var(--fav); color: var(--fav);
+                 border-radius: 999px; padding: 3px 10px; cursor: pointer; font-size: .82rem; white-space: nowrap; }
+  #v-parecidas[hidden] { display: none; }
+  .minis { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .minis button { padding: 0; border: 2px solid transparent; border-radius: 4px; background: var(--panel2);
+                  cursor: pointer; width: 64px; height: 64px; overflow: hidden; }
+  .minis button.actual { border-color: var(--acento); }
+  .minis img { width: 100%; height: 100%; object-fit: cover; display: block; }
 </style>
 </head>
 <body>
@@ -168,6 +176,7 @@
 <div id="visor" hidden role="dialog" aria-modal="true" aria-label="Visor">
   <div class="visor-barra">
     <div class="visor-titulo"><b id="v-nombre"></b><span id="v-fecha"></span></div>
+    <button id="v-parecidas" hidden title="Hay fotos casi idénticas a esta (no se ha borrado nada)"></button>
     <div class="visor-acciones">
       <button id="v-fav" title="Favorito (S)" aria-label="Favorito"><svg viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg></button>
       <button id="v-info" title="Información (I)" aria-label="Información"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></svg></button>
@@ -203,6 +212,7 @@ const MAX_VISIBLES = 40;          // etiquetas por grupo antes de "+N más"
 const GRUPOS = [['etiqueta', 'Etiquetas'], ['persona', 'Personas'],
                 ['camara', 'Cámaras'], ['auto', 'Automáticas']];
 const etiquetas = new Map();      // clave -> { clave, grupo, texto, n }
+const gruposParecidas = new Map(); // número de grupo -> fotos casi idénticas
 
 const estado = {
   items: [], filtrados: [], tipo: '', anio: '', asc: false,
@@ -276,6 +286,11 @@ async function cargar() {
     return it;
   });
   estado.items.sort((a, b) => a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0);
+  estado.items.forEach(it => {
+    if (!it.parecidas) return;
+    const g = gruposParecidas.get(it.parecidas) || [];
+    g.push(it); gruposParecidas.set(it.parecidas, g);
+  });
   await cargarFavoritos();
   rellenarAnios();
   pintarPanelEtiquetas();
@@ -595,6 +610,9 @@ function mostrar() {
   $('v-fav').classList.toggle('activo', estado.favs.has(it.src));
   $('v-descargar').href = ruta(it.src);
   $('v-descargar').setAttribute('download', it.src.split('/').pop());
+  const otras = (gruposParecidas.get(it.parecidas) || []).length - 1;
+  $('v-parecidas').hidden = otras <= 0;
+  $('v-parecidas').textContent = otras === 1 ? '⚠ 1 foto parecida' : `⚠ ${otras} fotos parecidas`;
   pintarDatos(it);
   precargar();
   if (estado.pase) programarPase();
@@ -654,7 +672,27 @@ function pintarDatos(it) {
          `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}`, true));
   }
   if (it.original) fila('Original', enlace(it.original.split('/').pop(), ruta(it.original), true));
+  const grupo = gruposParecidas.get(it.parecidas);
+  if (grupo && grupo.length > 1) {
+    const cont = document.createElement('div'); cont.className = 'minis';
+    grupo.forEach(otra => {
+      const b = document.createElement('button');
+      b.title = `${otra.nombre} · ${otra.ancho || '?'}×${otra.alto || '?'} · ${tamano(otra.bytes || 0)}`;
+      if (otra === it) b.classList.add('actual');
+      const img = document.createElement('img'); img.src = ruta(otra.thumb || otra.src); img.alt = otra.nombre;
+      b.append(img);
+      b.addEventListener('click', () => irA(otra));
+      cont.append(b);
+    });
+    fila('Parecidas (no se ha borrado nada)', cont);
+  }
   fila('Automáticas', chips('auto', it.auto));
+}
+
+function irA(otra) {
+  const i = estado.filtrados.indexOf(otra);
+  if (i >= 0) abrirVisor(i);
+  else avisar('Esa foto está oculta por los filtros actuales.');
 }
 
 function precargar() {
@@ -715,6 +753,7 @@ $('v-ant').addEventListener('click', () => mover(-1));
 $('v-sig').addEventListener('click', () => mover(1));
 $('v-fav').addEventListener('click', () => alternarFavorito(estado.indice));
 $('v-info').addEventListener('click', alternarPanel);
+$('v-parecidas').addEventListener('click', () => { if ($('v-panel').hidden) alternarPanel(); });
 $('v-pase').addEventListener('click', alternarPase);
 $('v-completa').addEventListener('click', alternarCompleta);
 medio.addEventListener('click', e => { if (e.target === medio) cerrarVisor(); });

@@ -23,6 +23,7 @@ from pathlib import Path
 
 from catalogo import info_por_destino
 from media_utils import CARPETA_GALERIA, fecha_desde_nombre, fecha_mtime, listar_archivos
+from similares import agrupar, dhash
 
 EXTENSIONES_FOTO = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"}
 EXTENSIONES_VIDEO = {".mp4", ".webm", ".mov", ".m4v"}
@@ -119,6 +120,7 @@ def etiquetas_automaticas(e: dict) -> list:
         ("Verticales", alto > ancho * 1.1 > 0),
         ("Panorámicas", alto and ancho / alto >= 2),   # no las capturas de móvil (verticales)
         ("Fecha dudosa", e.get("fuente_fecha") == "archivo"),
+        ("Parecidas", e.get("parecidas")),
     ]
     return [nombre for nombre, cumple in reglas if cumple]
 
@@ -167,6 +169,12 @@ def _elemento(ruta: Path, carpeta: Path, previos: dict, hay_ffmpeg: bool):
         except Exception as exc:
             print(f"  miniatura omitida para {rel}: {exc}")
     elemento["thumb"] = thumb_rel if thumb.exists() else ""
+    if tipo == "foto" and "dhash" not in elemento:
+        # Hash perceptual: de la miniatura si existe (mucho más rápido; da el mismo hash)
+        try:
+            elemento["dhash"] = dhash(thumb if thumb.exists() else ruta)
+        except Exception:
+            pass
     return elemento, reutilizado
 
 
@@ -183,6 +191,8 @@ def construir_indice(carpeta: Path, regenerar: bool = False, hilos: int = 0):
     with ThreadPoolExecutor(hilos) as pool:
         resultados = list(pool.map(
             lambda r: _elemento(r, carpeta, previos, hay_ffmpeg), rutas))
+
+    grupos = marcar_parecidas([e for e, _ in resultados])
 
     elementos = []
     for elemento, _ in resultados:
@@ -215,8 +225,23 @@ def construir_indice(carpeta: Path, regenerar: bool = False, hilos: int = 0):
         "videos_sin_miniatura": sum(e["tipo"] == "video" and not e["thumb"]
                                     for e in elementos),
         "hay_ffmpeg": hay_ffmpeg,
+        "grupos_parecidas": grupos,
     }
     return elementos, stats
+
+
+def marcar_parecidas(elementos: list) -> int:
+    """Pone `parecidas` (número de grupo) a las fotos casi idénticas. Devuelve cuántos grupos."""
+    fotos = {e["src"]: e for e in elementos if e.get("dhash")}
+    proporciones = {src: e["ancho"] / e["alto"] for src, e in fotos.items()
+                    if e.get("ancho") and e.get("alto")}
+    for e in elementos:
+        e.pop("parecidas", None)
+    grupos = agrupar({src: e["dhash"] for src, e in fotos.items()}, proporciones)
+    for n, grupo in enumerate(sorted(sorted(g) for g in grupos), 1):
+        for src in grupo:
+            fotos[src]["parecidas"] = n
+    return len(grupos)
 
 
 # ----------------------------- Generación -----------------------------
@@ -243,6 +268,9 @@ def generar_galeria(carpeta: Path, regenerar: bool = False) -> bool:
     nuevos = len(elementos) - stats["reutilizados"]
     print(f"Galería generada: {stats['fotos']} foto(s) y {stats['videos']} vídeo(s) "
           f"({nuevos} nuevo(s) o modificado(s), {stats['reutilizados']} sin cambios).")
+    if stats["grupos_parecidas"]:
+        print(f"Fotos parecidas: {stats['grupos_parecidas']} grupo(s) "
+              "(filtro «Parecidas» en la galería; no se ha borrado nada).")
     if stats["videos_sin_miniatura"] and not stats["hay_ffmpeg"]:
         print(f"AVISO: {stats['videos_sin_miniatura']} vídeo(s) sin miniatura: "
               "instala FFmpeg para generarlas.")

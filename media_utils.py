@@ -196,7 +196,8 @@ def parsear_fecha_iso(texto):
 
 def nuevas_estadisticas() -> dict:
     return {"procesados": 0, "sin_cambios": 0, "ya_importados": 0, "duplicados": 0,
-            "omitidos": 0, "errores": 0, "bytes_antes": 0, "bytes_despues": 0}
+            "omitidos": 0, "errores": 0, "bytes_antes": 0, "bytes_despues": 0,
+            "parecidas": 0, "parecidas_omitidas": 0, "danados": 0}
 
 
 def imprimir_resumen(stats: dict, sustantivo: str, simular: bool,
@@ -208,6 +209,9 @@ def imprimir_resumen(stats: dict, sustantivo: str, simular: bool,
         ("  de ellos sin recomprimir", stats["sin_cambios"]),
         ("Ya estaban en la biblioteca", stats["ya_importados"]),
         ("Duplicados (no se tocan)", stats["duplicados"]),
+        ("Parecidas a otra foto", stats.get("parecidas", 0)),
+        ("Parecidas no importadas", stats.get("parecidas_omitidas", 0)),
+        ("Dañados (ver informe)", stats.get("danados", 0)),
         ("Omitidos", stats["omitidos"]),
         ("Errores", stats["errores"]),
     ]
