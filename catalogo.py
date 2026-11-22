@@ -19,6 +19,8 @@ from pathlib import Path
 from media_utils import CARPETA_INTERNA
 
 VERSION_ESQUEMA = 2
+# Segundos que se espera si otro proceso (p. ej. la galería) está leyendo el catálogo
+ESPERA_BLOQUEO = 30
 
 ESQUEMA = """
 CREATE TABLE IF NOT EXISTS archivos (
@@ -74,14 +76,14 @@ class Catalogo:
         ruta = ruta_catalogo(biblioteca)
         if simular:
             if ruta.exists():
-                self._db = sqlite3.connect(f"{ruta.as_uri()}?mode=ro", uri=True,
+                self._db = sqlite3.connect(f"{ruta.as_uri()}?mode=ro", uri=True, timeout=ESPERA_BLOQUEO,
                                            check_same_thread=False)
             else:
                 self._db = sqlite3.connect(":memory:", check_same_thread=False)
                 self._db.executescript(ESQUEMA)
         else:
             ruta.parent.mkdir(parents=True, exist_ok=True)
-            self._db = sqlite3.connect(ruta, check_same_thread=False)
+            self._db = sqlite3.connect(ruta, check_same_thread=False, timeout=ESPERA_BLOQUEO)
             self._migrar()
             self._db.executescript(ESQUEMA)
             self._db.execute(f"PRAGMA user_version = {VERSION_ESQUEMA}")
@@ -208,7 +210,7 @@ def info_por_destino(biblioteca: Path) -> dict:
     if not ruta.exists():
         return {}
     try:
-        db = sqlite3.connect(f"{ruta.as_uri()}?mode=ro", uri=True)
+        db = sqlite3.connect(f"{ruta.as_uri()}?mode=ro", uri=True, timeout=ESPERA_BLOQUEO)
         try:
             db.row_factory = sqlite3.Row
             filas = db.execute("SELECT * FROM archivos").fetchall()
