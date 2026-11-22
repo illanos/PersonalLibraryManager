@@ -72,6 +72,13 @@ class Exportacion(CasoConCarpeta):
                          ["playa", "vacaciones", "Cadiz", "verano", "familia", "cumple"])
         self.assertEqual((datos["personas"], datos["valoracion"]), (["Ana"], 4))
 
+    def test_nunca_amplia_una_foto_pequena(self):
+        # max_lado es un máximo, no un objetivo: una foto de 800x600 sale a 800x600
+        origen = crear_foto(self.dir / "pequena.jpg", tam=(800, 600))
+        guardar_optimizada(origen, self.dir / "b.jpg", OpcionesFotos(max_lado=3200))
+        with Image.open(self.dir / "b.jpg") as im:
+            self.assertEqual(im.size, (800, 600))
+
     def test_webp_avisa_de_que_no_admite_iptc(self):
         origen = crear_foto(self.dir / "a.jpg", completa=True)
         avisos = guardar_optimizada(origen, self.dir / "b.webp", OpcionesFotos(formato="webp"))

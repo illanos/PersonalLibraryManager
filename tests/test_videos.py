@@ -48,6 +48,12 @@ class Comando(unittest.TestCase):
         self.assertIn("-2", filtro)
         self.assertNotIn("1080", filtro)
 
+    def test_nunca_amplia_un_video_pequeno(self):
+        # El filtro limita con min(iw, máximo): un vídeo de 640x360 se queda en 640x360
+        self.assertIn("min(iw,1920)", videos.filtro_escala(1920))
+        self.assertIn("min(ih,1920)", videos.filtro_escala(1920))
+        self.assertEqual(videos.dimensiones_objetivo(640, 360, 1920), (640, 360))
+
     def test_comando(self):
         cmd = videos.comando_codificacion(Path("a.mov"), Path("b.mp4.part"),
                                           videos.OpcionesVideos(codec="h265", crf=26))
