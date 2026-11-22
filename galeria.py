@@ -15,12 +15,13 @@ Para verla:  python main.py galeria <carpeta> --servir
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from catalogo import originales_por_destino
+from catalogo import info_por_destino
 from media_utils import CARPETA_GALERIA, fecha_desde_nombre, fecha_mtime, listar_archivos
 
 EXTENSIONES_FOTO = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"}
@@ -78,15 +79,17 @@ def _miniatura_video(ruta: Path, destino: Path, duracion: float):
 
 # ----------------------------- Índice -----------------------------
 
+CAMPOS_FOTO = ("ancho", "alto", "camara", "objetivo", "exposicion", "gps", "etiquetas",
+               "personas", "titulo", "descripcion", "autor", "valoracion")
+
+
 def _metadatos_foto(ruta: Path) -> dict:
-    from fotos import leer_metadatos
+    from metadatos import leer_metadatos
     try:
         datos = leer_metadatos(ruta)
     except Exception:
-        fecha = fecha_desde_nombre(ruta.stem) or fecha_mtime(ruta)
-        return {"fecha": fecha, "ancho": 0, "alto": 0}
-    return {"fecha": datos["fecha"], "ancho": datos["ancho"], "alto": datos["alto"],
-            "camara": datos["camara"], "gps": datos["gps"]}
+        return {"fecha": fecha_desde_nombre(ruta.stem) or fecha_mtime(ruta)}
+    return {"fecha": datos["fecha"], **{c: datos[c] for c in CAMPOS_FOTO}}
 
 
 def _metadatos_video(ruta: Path, hay_ffmpeg: bool) -> dict:
@@ -94,7 +97,30 @@ def _metadatos_video(ruta: Path, hay_ffmpeg: bool) -> dict:
     info = (sondear(ruta) if hay_ffmpeg else None) or {}
     fecha, _ = fecha_video(ruta, info)
     return {"fecha": fecha, "ancho": info.get("ancho", 0), "alto": info.get("alto", 0),
-            "duracion": round(info.get("duracion", 0), 1)}
+            "duracion": round(info.get("duracion", 0), 1),
+            "camara": info.get("camara", ""), "gps": info.get("gps")}
+
+
+# Etiquetas automáticas: casi ninguna foto de móvil trae etiquetas propias, pero
+# sus metadatos permiten agruparlas igualmente.
+_RE_CAPTURA = re.compile(r"screen[ _-]?shot|screenrecord|captura|pantallazo", re.IGNORECASE)
+_RE_WHATSAPP = re.compile(r"-WA\d{4}|whatsapp", re.IGNORECASE)
+
+
+def etiquetas_automaticas(e: dict) -> list:
+    nombres = f"{e.get('nombre_original', '')} {e.get('nombre', '')}"
+    ancho, alto = e.get("ancho") or 0, e.get("alto") or 0
+    reglas = [
+        ("Selfies", re.search(r"front|frontal|selfie", e.get("objetivo", ""), re.IGNORECASE)),
+        ("Capturas de pantalla", _RE_CAPTURA.search(nombres)),
+        ("WhatsApp", _RE_WHATSAPP.search(nombres)),
+        ("Con ubicación", e.get("gps")),
+        ("Con estrellas", e.get("valoracion")),
+        ("Verticales", alto > ancho * 1.1 > 0),
+        ("Panorámicas", alto and ancho / alto >= 2),   # no las capturas de móvil (verticales)
+        ("Fecha dudosa", e.get("fuente_fecha") == "archivo"),
+    ]
+    return [nombre for nombre, cumple in reglas if cumple]
 
 
 def _cargar_indice_previo(carpeta: Path) -> dict:
@@ -149,7 +175,7 @@ def construir_indice(carpeta: Path, regenerar: bool = False, hilos: int = 0):
     carpeta_thumbs = carpeta / CARPETA_GALERIA / "thumbs"
     carpeta_thumbs.mkdir(parents=True, exist_ok=True)
     previos = {} if regenerar else _cargar_indice_previo(carpeta)
-    originales = originales_por_destino(carpeta)
+    catalogo = info_por_destino(carpeta)
     hay_ffmpeg = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
 
     rutas = listar_archivos(carpeta, EXTENSIONES_FOTO | EXTENSIONES_VIDEO)
@@ -160,11 +186,18 @@ def construir_indice(carpeta: Path, regenerar: bool = False, hilos: int = 0):
 
     elementos = []
     for elemento, _ in resultados:
-        original = originales.get(elemento["src"])
-        if original and (carpeta / original).exists():
-            elemento["original"] = original
-        else:
-            elemento.pop("original", None)
+        for clave in ("original", "nombre_original", "fuente_fecha", "auto"):
+            elemento.pop(clave, None)
+        info = catalogo.get(elemento["src"], {})
+        if info.get("original") and (carpeta / info["original"]).exists():
+            elemento["original"] = info["original"]
+        if info.get("origen"):
+            elemento["nombre_original"] = Path(info["origen"]).name
+        if info.get("fuente_fecha"):
+            elemento["fuente_fecha"] = info["fuente_fecha"]
+        auto = etiquetas_automaticas(elemento)
+        if auto:
+            elemento["auto"] = auto
         elementos.append(elemento)
     elementos.sort(key=lambda e: (e["fecha"], e["src"]), reverse=True)
 

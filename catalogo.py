@@ -112,8 +112,8 @@ class Catalogo:
         self.cerrar()
 
 
-def originales_por_destino(biblioteca: Path) -> dict:
-    """{destino_relativo: original_relativo} según el catálogo (vacío si no hay)."""
+def info_por_destino(biblioteca: Path) -> dict:
+    """{destino_relativo: {original, origen, fuente_fecha}} según el catálogo (vacío si no hay)."""
     ruta = ruta_catalogo(biblioteca)
     if not ruta.exists():
         return {}
@@ -121,12 +121,13 @@ def originales_por_destino(biblioteca: Path) -> dict:
         db = sqlite3.connect(f"{ruta.as_uri()}?mode=ro", uri=True)
         try:
             filas = db.execute(
-                "SELECT destino, original FROM archivos WHERE original IS NOT NULL").fetchall()
+                "SELECT destino, original, origen, fuente_fecha FROM archivos").fetchall()
         finally:
             db.close()
     except sqlite3.Error:
         return {}
-    return dict(filas)
+    return {destino: {"original": original, "origen": origen, "fuente_fecha": fuente}
+            for destino, original, origen, fuente in filas}
 
 
 class Informe:

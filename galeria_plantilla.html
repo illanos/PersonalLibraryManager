@@ -10,7 +10,7 @@
     --texto: #ececef; --tenue: #9b9ba5; --acento: #8b6cff; --fav: #ffc83d;
     --alto: 200px; --alto-barra: 64px;
   }
-  @media (max-width: 640px) { :root { --alto: 120px; } }
+  @media (max-width: 640px) { :root { --alto: 96px; } }
   * { box-sizing: border-box; }
   html, body { margin: 0; }
   body { background: var(--bg); color: var(--texto); font: 14px/1.4 'Segoe UI', system-ui, sans-serif; }
@@ -44,6 +44,28 @@
     #busqueda { flex: 1 1 100%; order: 5; }
     .tamano { display: none; }
   }
+
+  /* ---------- Etiquetas ---------- */
+  #filtros { padding: 12px 16px 4px; border-bottom: 1px solid var(--borde); background: var(--panel);
+             max-height: 45vh; overflow-y: auto; }
+  #filtros[hidden], #activos[hidden] { display: none; }
+  .grupo { margin-bottom: 12px; }
+  .grupo h3 { margin: 0 0 6px; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em;
+              color: var(--tenue); font-weight: 600; }
+  .etqs { display: flex; flex-wrap: wrap; gap: 6px; }
+  .etq { background: var(--panel2); border: 1px solid var(--borde); border-radius: 999px; padding: 3px 10px;
+         cursor: pointer; color: var(--texto); font-size: .85rem; }
+  .etq:hover { border-color: var(--tenue); }
+  .etq span { color: var(--tenue); margin-left: 6px; font-size: .78rem; }
+  .etq.activo { border-color: var(--acento); background: rgba(139,108,255,.22); }
+  .etq.mas { background: none; color: var(--acento); }
+  .pista { color: var(--tenue); margin: 0 0 12px; max-width: 720px; }
+  #activos { flex-basis: 100%; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  #activos .etq { border-color: var(--acento); background: rgba(139,108,255,.22); }
+  #activos .etq::after { content: "\2715"; margin-left: 6px; color: var(--tenue); }
+  .limpiar { background: none; border: 0; color: var(--tenue); cursor: pointer; text-decoration: underline; }
+  .estrellas { color: var(--fav); letter-spacing: 2px; }
+  #v-panel .etqs { margin-top: 4px; }
 
   /* ---------- Línea de tiempo ---------- */
   main { padding: 0 16px 24px; }
@@ -122,7 +144,7 @@
 <body>
 <header id="barra">
   <div class="titulo"><h1 id="titulo">Galería</h1><span id="contador"></span></div>
-  <input id="busqueda" type="search" placeholder="Buscar: nombre, fecha, mes, carpeta, cámara…" aria-label="Buscar">
+  <input id="busqueda" type="search" placeholder="Buscar: etiqueta, persona, título, mes, cámara…" aria-label="Buscar">
   <div class="chips" role="group" aria-label="Tipo">
     <button class="chip activo" data-tipo="">Todo</button>
     <button class="chip" data-tipo="foto">Fotos</button>
@@ -130,11 +152,14 @@
     <button class="chip" data-tipo="fav">★ Favoritos</button>
   </div>
   <select id="anio" aria-label="Año"><option value="">Todos los años</option></select>
+  <button id="btn-etiquetas" class="chip" aria-expanded="false" aria-controls="filtros">Etiquetas</button>
   <button id="orden" class="chip" title="Cambiar el orden">Recientes primero</button>
   <label class="tamano" title="Tamaño de las miniaturas">
     <input id="tamano" type="range" min="100" max="340" step="20" value="200" aria-label="Tamaño de las miniaturas">
   </label>
+  <div id="activos" hidden aria-label="Filtros activos"></div>
 </header>
+<section id="filtros" hidden aria-label="Etiquetas"></section>
 
 <main id="rejilla"></main>
 <div id="centinela"></div>
@@ -159,7 +184,8 @@
     <aside id="v-panel" hidden>
       <dl id="v-datos"></dl>
       <p class="atajos"><kbd>←</kbd> <kbd>→</kbd> navegar · <kbd>S</kbd> favorito · <kbd>I</kbd> información ·
-        <kbd>P</kbd> presentación · <kbd>F</kbd> pantalla completa · <kbd>Esc</kbd> cerrar</p>
+        <kbd>P</kbd> presentación · <kbd>F</kbd> pantalla completa · <kbd>Esc</kbd> cerrar ·
+        <kbd>/</kbd> buscar</p>
     </aside>
   </div>
 </div>
@@ -172,9 +198,15 @@ const LOTE = 240;                 // miniaturas que se pintan de cada vez
 const PASE_MS = 4000;             // duración de cada foto en la presentación
 const CLAVE_FAVS = 'galeria-favoritos:' + location.pathname;
 const CLAVE_TAMANO = 'galeria-tamano';
+const CLAVE_PANEL = 'galeria-panel-etiquetas';
+const MAX_VISIBLES = 40;          // etiquetas por grupo antes de "+N más"
+const GRUPOS = [['etiqueta', 'Etiquetas'], ['persona', 'Personas'],
+                ['camara', 'Cámaras'], ['auto', 'Automáticas']];
+const etiquetas = new Map();      // clave -> { clave, grupo, texto, n }
 
 const estado = {
   items: [], filtrados: [], tipo: '', anio: '', asc: false,
+  activas: new Set(),           // filtros de etiqueta activos ("grupo:valor")
   favs: new Set(), favsEnServidor: false,
   indice: 0, pase: false, empujado: false,
 };
@@ -229,13 +261,25 @@ async function cargar() {
   if (datos.titulo) { $('titulo').textContent = datos.titulo; document.title = datos.titulo + ' · Galería'; }
   estado.items = lista.map(it => {
     const f = fecha(it);
-    it._busqueda = normalizar([it.nombre, it.fecha.replace('T', ' '), isNaN(f) ? '' : fmtMes.format(f),
-                               it.carpeta, it.camara || '', it.tipo === 'video' ? 'video' : 'foto'].join(' '));
+    it._busqueda = normalizar([
+      it.nombre, it.fecha.replace('T', ' '), isNaN(f) ? '' : fmtMes.format(f), it.carpeta,
+      it.tipo === 'video' ? 'video' : 'foto', it.camara, it.objetivo, it.titulo, it.descripcion,
+      it.autor, it.nombre_original, ...(it.etiquetas || []), ...(it.personas || []), ...(it.auto || []),
+    ].filter(Boolean).join(' '));
+    it._claves = new Set();
+    clavesDe(it).forEach(([grupo, texto]) => {
+      const clave = claveDe(grupo, texto);
+      it._claves.add(clave);
+      const e = etiquetas.get(clave) || { clave, grupo, texto, n: 0 };
+      e.n++; etiquetas.set(clave, e);
+    });
     return it;
   });
   estado.items.sort((a, b) => a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0);
   await cargarFavoritos();
   rellenarAnios();
+  pintarPanelEtiquetas();
+  try { if (localStorage.getItem(CLAVE_PANEL) === '1') alternarPanelEtiquetas(); } catch (_) {}
   aplicar();
   const enlace = decodeURIComponent(location.hash.slice(1));
   if (enlace) {
@@ -259,6 +303,7 @@ function aplicar() {
     if (estado.tipo === 'fav') { if (!estado.favs.has(it.src)) return false; }
     else if (estado.tipo && it.tipo !== estado.tipo) return false;
     if (estado.anio && !it.fecha.startsWith(estado.anio)) return false;
+    for (const clave of estado.activas) if (!it._claves.has(clave)) return false;
     return palabras.every(p => it._busqueda.includes(p));
   });
   if (estado.asc) estado.filtrados.reverse();
@@ -373,6 +418,104 @@ rejilla.addEventListener('keydown', e => {
   if (fig && e.key === 'Enter') abrirVisor(+fig.dataset.indice);
 });
 
+/* ---------- Etiquetas ---------- */
+function clavesDe(it) {
+  const c = [];
+  (it.etiquetas || []).forEach(v => c.push(['etiqueta', v]));
+  (it.personas || []).forEach(v => c.push(['persona', v]));
+  if (it.camara) c.push(['camara', it.camara]);
+  (it.auto || []).forEach(v => c.push(['auto', v]));
+  return c;
+}
+function claveDe(grupo, texto) { return grupo + ':' + normalizar(String(texto)); }
+
+function botonEtiqueta(e) {
+  const b = document.createElement('button');
+  b.className = 'etq'; b.dataset.clave = e.clave; b.textContent = e.texto;
+  const n = document.createElement('span'); n.textContent = fmtNum.format(e.n); b.append(n);
+  b.addEventListener('click', () => alternarEtiqueta(e.clave));
+  return b;
+}
+
+function pintarPanelEtiquetas() {
+  const panel = $('filtros'); panel.replaceChildren();
+  const todas = [...etiquetas.values()];
+  if (!todas.some(e => e.grupo === 'etiqueta' || e.grupo === 'persona')) {
+    const p = document.createElement('p'); p.className = 'pista';
+    p.textContent = 'Estas fotos aún no tienen etiquetas propias. Puedes añadirlas en el Explorador de ' +
+      'Windows (Propiedades › Detalles › Etiquetas), Lightroom, digiKam o Fotos; se conservan al ' +
+      'exportar y aparecerán aquí al regenerar la galería.';
+    panel.append(p);
+  }
+  GRUPOS.forEach(([grupo, titulo]) => {
+    const lista = todas.filter(e => e.grupo === grupo)
+      .sort((a, b) => b.n - a.n || a.texto.localeCompare(b.texto, 'es'));
+    if (!lista.length) return;
+    const sec = document.createElement('div'); sec.className = 'grupo';
+    const h = document.createElement('h3'); h.textContent = titulo;
+    const cont = document.createElement('div'); cont.className = 'etqs';
+    lista.forEach((e, i) => { const b = botonEtiqueta(e); b.hidden = i >= MAX_VISIBLES; cont.append(b); });
+    if (lista.length > MAX_VISIBLES) {
+      const mas = document.createElement('button'); mas.className = 'etq mas';
+      mas.textContent = `+${fmtNum.format(lista.length - MAX_VISIBLES)} más`;
+      mas.addEventListener('click', () => {
+        cont.querySelectorAll('.etq[hidden]').forEach(b => { b.hidden = false; });
+        mas.remove();
+      });
+      cont.append(mas);
+    }
+    sec.append(h, cont); panel.append(sec);
+  });
+}
+
+function alternarPanelEtiquetas() {
+  const panel = $('filtros'), abrir = panel.hidden;
+  panel.hidden = !abrir;
+  $('btn-etiquetas').setAttribute('aria-expanded', String(abrir));
+  try { localStorage.setItem(CLAVE_PANEL, abrir ? '1' : '0'); } catch (_) {}
+  actualizarActivas();
+}
+
+function actualizarActivas() {
+  document.querySelectorAll('#filtros .etq[data-clave]').forEach(b =>
+    b.classList.toggle('activo', estado.activas.has(b.dataset.clave)));
+  const barra = $('activos'); barra.replaceChildren();
+  barra.hidden = !estado.activas.size;
+  estado.activas.forEach(clave => {
+    const e = etiquetas.get(clave);
+    const b = document.createElement('button'); b.className = 'etq';
+    b.textContent = e ? e.texto : clave.split(':').slice(1).join(':');
+    b.title = 'Quitar este filtro';
+    b.addEventListener('click', () => alternarEtiqueta(clave));
+    barra.append(b);
+  });
+  if (estado.activas.size) {
+    const limpiar = document.createElement('button'); limpiar.className = 'limpiar';
+    limpiar.textContent = 'Quitar filtros';
+    limpiar.addEventListener('click', () => { estado.activas.clear(); actualizarActivas(); aplicar(); });
+    barra.append(limpiar);
+  }
+  const n = estado.activas.size, boton = $('btn-etiquetas');
+  boton.textContent = n ? `Etiquetas (${n})` : 'Etiquetas';
+  boton.classList.toggle('activo', n > 0 || !$('filtros').hidden);
+}
+
+function alternarEtiqueta(clave) {
+  estado.activas.has(clave) ? estado.activas.delete(clave) : estado.activas.add(clave);
+  actualizarActivas();
+  aplicar();
+}
+
+function filtrarPor(clave) {
+  cerrarVisor();
+  estado.activas.add(clave);
+  actualizarActivas();
+  aplicar();
+  scrollTo({ top: 0 });
+}
+
+$('btn-etiquetas').addEventListener('click', alternarPanelEtiquetas);
+
 /* ---------- Favoritos ---------- */
 async function cargarFavoritos() {
   try {
@@ -471,14 +614,39 @@ function pintarDatos(it) {
     if (nueva) { a.target = '_blank'; a.rel = 'noopener noreferrer'; }
     return a;
   };
+  const chips = (grupo, valores) => {
+    if (!valores || !valores.length) return '';
+    const cont = document.createElement('div'); cont.className = 'etqs';
+    valores.forEach(v => {
+      const b = document.createElement('button'); b.className = 'etq'; b.textContent = v;
+      b.title = 'Ver todo lo de «' + v + '»';
+      b.addEventListener('click', () => filtrarPor(claveDe(grupo, v)));
+      cont.append(b);
+    });
+    return cont;
+  };
   const f = fecha(it);
+  const archivo = it.src.split('/').pop();
+  fila('Título', it.titulo);
+  fila('Descripción', it.descripcion);
   fila('Fecha', isNaN(f) ? it.fecha : mayuscula(fmtLargo.format(f)));
-  fila('Archivo', it.src.split('/').pop());
+  if (it.valoracion) {
+    const s = document.createElement('span'); s.className = 'estrellas';
+    s.textContent = '★'.repeat(it.valoracion) + '☆'.repeat(5 - it.valoracion);
+    s.setAttribute('aria-label', it.valoracion + ' de 5'); fila('Valoración', s);
+  }
+  fila('Etiquetas', chips('etiqueta', it.etiquetas));
+  fila('Personas', chips('persona', it.personas));
+  fila('Archivo', archivo);
+  if (it.nombre_original && it.nombre_original !== archivo) fila('Nombre original', it.nombre_original);
   fila('Dimensiones', it.ancho && it.alto ? `${it.ancho} × ${it.alto} px` +
        (it.tipo === 'foto' ? ` (${(it.ancho * it.alto / 1e6).toFixed(1).replace('.', ',')} MP)` : '') : '');
   fila('Duración', it.tipo === 'video' && it.duracion ? duracion(it.duracion) : '');
   fila('Tamaño', it.bytes ? tamano(it.bytes) : '');
-  fila('Cámara', it.camara);
+  fila('Cámara', chips('camara', it.camara ? [it.camara] : []));
+  fila('Objetivo', it.objetivo);
+  fila('Exposición', it.exposicion);
+  fila('Autor', it.autor);
   fila('Carpeta', it.carpeta);
   if (it.gps) {
     const [lat, lon] = it.gps;
@@ -486,6 +654,7 @@ function pintarDatos(it) {
          `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}`, true));
   }
   if (it.original) fila('Original', enlace(it.original.split('/').pop(), ruta(it.original), true));
+  fila('Automáticas', chips('auto', it.auto));
 }
 
 function precargar() {

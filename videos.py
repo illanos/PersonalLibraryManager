@@ -6,6 +6,7 @@ Requiere FFmpeg y ffprobe accesibles en la terminal:
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -85,6 +86,35 @@ def _fecha_metadatos(datos: dict):
     return None
 
 
+_RE_ISO6709 = re.compile(r"([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)")
+
+
+def _tags_contenedor(datos: dict) -> dict:
+    return {k.lower(): v for k, v in (datos.get("format", {}).get("tags") or {}).items()}
+
+
+def _gps_video(tags: dict):
+    """Ubicación ISO 6709 ("+40.4168-003.7038+650/") de iPhone y Android."""
+    for clave in ("com.apple.quicktime.location.iso6709", "location", "location-eng"):
+        m = _RE_ISO6709.match(str(tags.get(clave) or ""))
+        if m:
+            lat, lon = float(m.group(1)), float(m.group(2))
+            if -90 <= lat <= 90 and -180 <= lon <= 180 and (lat or lon):
+                return [round(lat, 6), round(lon, 6)]
+    return None
+
+
+def _camara_video(tags: dict) -> str:
+    def primero(*claves):
+        return next((str(tags[c]).strip() for c in claves if tags.get(c)), "")
+
+    marca = primero("com.apple.quicktime.make", "make", "com.android.manufacturer")
+    modelo = primero("com.apple.quicktime.model", "model", "com.android.model")
+    if marca and modelo.lower().startswith(marca.split()[0].lower()):
+        return modelo
+    return f"{marca} {modelo}".strip()
+
+
 def sondear(ruta: Path):
     """Metadatos vía ffprobe (fecha, dimensiones de visualización, duración...) o None."""
     cmd = ["ffprobe", "-v", "error", "-print_format", "json",
@@ -115,6 +145,8 @@ def sondear(ruta: Path):
         "ancho": ancho, "alto": alto, "rotacion": rotacion,
         "duracion": duracion,
         "codec": video.get("codec_name", ""),
+        "camara": _camara_video(_tags_contenedor(datos)),
+        "gps": _gps_video(_tags_contenedor(datos)),
     }
 
 
