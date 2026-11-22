@@ -237,8 +237,11 @@ def leer_xmp(xmp) -> dict:
 
     def alternativa(elemento):
         opciones = [x for x in elemento.iter(li) if x.text and x.text.strip()]
+        # Ojo: un Element sin hijos es "falso"; hay que comparar con None
         preferida = next((x for x in opciones if x.get(XML_LANG) == "x-default"), None)
-        return (preferida or (opciones[0] if opciones else elemento)).text or ""
+        if preferida is None:
+            preferida = opciones[0] if opciones else elemento
+        return preferida.text or ""
 
     def valoracion(valor):
         try:
