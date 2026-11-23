@@ -822,7 +822,7 @@ function cifras(f, simular) {
   if (f.fase === "reorganizar") return [c(num(r.movidos), simular ? "se moverían" : "movidos o renombrados", "principal"),
     r.errores ? c(num(r.errores), "errores", "mal") : null];
   const n = NOMBRES_FASE[f.fase];
-  const algo = ["procesados", "ya_importados", "duplicados", "omitidos", "danados", "errores", "parecidas_omitidas"];
+  const algo = ["procesados", "ya_importados", "duplicados", "omitidos", "danados", "errores", "parecidas_omitidas", "descartadas"];
   if (!algo.some((k) => r[k])) return [c("—", `no había ${n}`)];
   const lista = [
     c(num(r.procesados), simular ? `${n} a importar` : `${n} ${f.fase === "fotos" ? "importadas" : "importados"}`, "principal"),
@@ -831,6 +831,7 @@ function cifras(f, simular) {
     r.duplicados ? c(num(r.duplicados), "duplicados") : null,
     r.parecidas ? c(num(r.parecidas), "parecidas") : null,
     r.parecidas_omitidas ? c(num(r.parecidas_omitidas), "parecidas omitidas") : null,
+    r.descartadas ? c(num(r.descartadas), "quitadas antes a mano") : null,
     r.omitidos ? c(num(r.omitidos), "omitidos", "mal") : null,
     r.danados ? c(num(r.danados), "dañados", "mal") : null,
     r.errores ? c(num(r.errores), "errores", "mal") : null,
