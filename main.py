@@ -7,6 +7,7 @@ Uso:
     python main.py videos  <origen> [--destino DEST] [--simular] [opciones de vídeo]
     python main.py audio   <origen> [--destino DEST] [--simular]
     python main.py todo    <origen> [--destino DEST] [--simular] [--servir] [--sin-audio]
+    python main.py google  <takeout/Google Fotos> [--destino DEST] [--simular] [--servir]
     python main.py galeria <carpeta> [--servir] [--puerto N] [--regenerar] [--caras]
     python main.py reorganizar <biblioteca> [--whatsapp] [--fechas-aproximadas] [--simular]
 
@@ -137,6 +138,19 @@ def construir_parser() -> argparse.ArgumentParser:
     p_todo.add_argument("--sin-galeria", action="store_true",
                         help="No generar la galería al terminar")
 
+    p_google = sub.add_parser(
+        "google", parents=[comun, op_fotos, op_videos, servir],
+        help="Importar un Takeout de Google Fotos (fotos + vídeos + galería) grabando en "
+             "cada archivo los metadatos de su JSON",
+        description="Como 'todo', para la carpeta 'Google Fotos' de un Takeout. Cada foto y "
+                    "vídeo recibe lo que dice su JSON y no trae dentro (fecha, GPS), además "
+                    "de descripción, personas y álbumes (como etiquetas). Los JSON no se "
+                    "copian. Las copias '-editada' se omiten si está su original, y el clip "
+                    "de cada foto con movimiento (.MP) se importa como vídeo con su mismo "
+                    "nombre. El origen solo se lee.")
+    p_google.add_argument("--sin-galeria", action="store_true",
+                          help="No generar la galería al terminar")
+
     p_reo = sub.add_parser(
         "reorganizar", help="Ordenar una biblioteca ya importada (solo dentro de ella)",
         description="Mueve o renombra archivos ya importados, solo dentro de la biblioteca, "
@@ -246,16 +260,29 @@ def main(argv=None):
     origen, destino = validar_origen_destino(args.origen, args.destino, args.simular)
     print(f"Origen  : {origen}\nDestino : {destino}")
 
-    if args.comando in ("fotos", "todo"):
+    externos = None
+    if args.comando == "google":
+        if not hay_pillow():
+            sys.exit(MENSAJE_PILLOW)
+        from takeout import IndiceTakeout
+        print("\nLeyendo los JSON de Google Fotos...")
+        externos = IndiceTakeout(origen)
+        print(externos.resumen())
+
+    if args.comando in ("fotos", "todo", "google"):
         if not hay_pillow():
             sys.exit(MENSAJE_PILLOW)
         from fotos import procesar_fotos
-        procesar_fotos(origen, destino, args.simular, opciones_fotos(args))
+        opciones = opciones_fotos(args)
+        opciones.externos = externos
+        procesar_fotos(origen, destino, args.simular, opciones)
 
-    if args.comando in ("videos", "todo"):
+    if args.comando in ("videos", "todo", "google"):
         if hay_ffmpeg():
             from videos import procesar_videos
-            procesar_videos(origen, destino, args.simular, opciones_videos(args))
+            opciones = opciones_videos(args)
+            opciones.externos = externos
+            procesar_videos(origen, destino, args.simular, opciones)
         elif args.comando == "videos":
             sys.exit(MENSAJE_FFMPEG)
         else:
@@ -270,7 +297,7 @@ def main(argv=None):
         from reorganizar import reorganizar
         reorganizar(destino, args.simular, fechas=True)
 
-    if args.comando == "todo" and not args.simular and not args.sin_galeria:
+    if args.comando in ("todo", "google") and not args.simular and not args.sin_galeria:
         print()
         galeria(destino, args)
 

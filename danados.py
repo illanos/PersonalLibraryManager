@@ -55,7 +55,8 @@ FIRMAS = {
     ".wav": lambda c: c[:4] == b"RIFF" and c[8:12] == b"WAVE",
 }
 SINONIMOS = {".jpeg": ".jpg", ".tiff": ".tif", ".heif": ".heic", ".webm": ".mkv",
-             ".mpeg": ".mpg", ".m2ts": ".mts"}
+             ".mpeg": ".mpg", ".m2ts": ".mts",
+             ".mp": ".mp4"}   # clip de una foto con movimiento en Google Takeout
 COLA = 64 * 1024
 
 
@@ -65,9 +66,22 @@ def firma_valida(ruta: Path, cabecera: bytes) -> bool:
     return comprobar is None or comprobar(cabecera)
 
 
-def _parece_truncada(ruta: Path, tamano: int) -> bool:
+# Imágenes que se reconocen por su contenido aunque la extensión no corresponda
+_FORMATOS_IMAGEN = (".jpg", ".png", ".gif", ".webp", ".bmp", ".tif")
+
+
+def formato_imagen(cabecera: bytes):
+    """Extensión que corresponde al contenido de una imagen ('.png'...), o None.
+
+    Google Fotos, por ejemplo, entrega capturas JPEG llamadas .png y PNG llamados .jpg:
+    no están dañadas (Pillow las abre por su contenido), solo mal nombradas.
+    """
+    return next((ext for ext in _FORMATOS_IMAGEN if FIRMAS[ext](cabecera)), None)
+
+
+def _parece_truncada(ruta: Path, tamano: int, ext: str = None) -> bool:
     """Comprobación barata: un JPEG termina en FFD9 y un PNG en IEND."""
-    ext = SINONIMOS.get(ruta.suffix.lower(), ruta.suffix.lower())
+    ext = ext or SINONIMOS.get(ruta.suffix.lower(), ruta.suffix.lower())
     if ext not in (".jpg", ".png"):
         return False
     with open(ruta, "rb") as f:
@@ -102,9 +116,12 @@ def diagnosticar(ruta: Path, tamano: int, imagen: bool = False):
         cabecera = f.read(16)
     if cabecera.strip(b"\x00") == b"":
         return VACIO, "solo ceros"
+    real = None
     if not firma_valida(ruta, cabecera):
-        return SIN_CABECERA, f"empieza por {cabecera[:8].hex(' ')}"
-    if imagen and _parece_truncada(ruta, tamano):
+        real = formato_imagen(cabecera) if imagen else None
+        if real is None:   # tampoco es otra imagen reconocible con la extensión cambiada
+            return SIN_CABECERA, f"empieza por {cabecera[:8].hex(' ')}"
+    if imagen and _parece_truncada(ruta, tamano, real):
         error = _decodifica(ruta)
         if error:
             return TRUNCADO, error

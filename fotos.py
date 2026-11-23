@@ -7,7 +7,7 @@ Opcional:  pip install pillow-heif   (fotos HEIC/HEIF del iPhone)
 import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -17,11 +17,12 @@ from catalogo import Catalogo, Informe
 from clasificacion import carpeta_destino, categoria
 from danados import ILEGIBLE, RegistroDanados, diagnosticar, problema_de_excepcion
 from media_utils import (
-    NOMBRE_ORIGINALES, copiar_atomico, fecha_desde_nombre, fecha_mtime, fecha_y_nombre, hash_archivo,
-    imprimir, imprimir_resumen, listar_archivos, nombre_libre, nuevas_estadisticas,
-    ruta_temporal, subcarpeta_fecha,
+    NOMBRE_ORIGINALES, MetadatosExtra, contar_extra, copiar_atomico, elegir_fecha,
+    fecha_desde_nombre, fecha_mtime, fecha_y_nombre, hash_archivo, imprimir,
+    imprimir_resumen, listar_archivos, metadatos_para_escribir, nombre_libre,
+    nuevas_estadisticas, resumen_extra, ruta_temporal, subcarpeta_fecha,
 )
-from metadatos import leer_metadatos, parametros_guardado
+from metadatos import jpeg_con_extra, leer_metadatos, parametros_guardado
 from similares import agrupar, calidad, dhash, es_copia
 
 try:
@@ -53,6 +54,9 @@ class OpcionesFotos:
     hilos: int = 0          # 0 = automático
     omitir_parecidas: bool = False   # no importar la peor copia de un grupo de parecidas
     pegatinas_aparte: bool = False   # pegatinas en WhatsApp/Pegatinas/ en vez de con el resto
+    # Metadatos que vienen aparte de cada archivo (p. ej. takeout.IndiceTakeout): objeto
+    # con metadatos(ruta) -> MetadatosExtra | None y omitir(ruta) -> motivo | None
+    externos: object = None
 
 
 # ----------------------------- Fecha -----------------------------
@@ -69,11 +73,13 @@ def obtener_fecha(ruta: Path):
 
 # ----------------------------- Optimización -----------------------------
 
-def guardar_optimizada(ruta: Path, destino: Path, opciones: OpcionesFotos = None) -> list:
+def guardar_optimizada(ruta: Path, destino: Path, opciones: OpcionesFotos = None,
+                       extra: MetadatosExtra = None) -> list:
     """Escribe en `destino` la versión reducida y recomprimida (de forma atómica).
 
-    Conserva EXIF, XMP, IPTC, ICC y comentario (ver metadatos.py). Devuelve la
-    lista de avisos sobre metadatos que no se hayan podido conservar.
+    Conserva EXIF, XMP, IPTC, ICC y comentario (ver metadatos.py) y les añade los
+    metadatos externos de `extra`. Devuelve la lista de avisos sobre metadatos que no
+    se hayan podido conservar.
     """
     opciones = opciones or OpcionesFotos()
     formato_pil = FORMATOS[opciones.formato][0]
@@ -81,7 +87,7 @@ def guardar_optimizada(ruta: Path, destino: Path, opciones: OpcionesFotos = None
 
     with Image.open(ruta) as original:
         im = ImageOps.exif_transpose(original)   # aplica la rotación EXIF
-        kwargs = parametros_guardado(original, im, formato_pil, avisos)
+        kwargs = parametros_guardado(original, im, formato_pil, avisos, extra)
 
     if opciones.max_lado and max(im.size) > opciones.max_lado:
         factor = opciones.max_lado / max(im.size)
@@ -137,9 +143,10 @@ class _Tarea:
     mejor: object = None       # con omitir_parecidas: la copia que se queda (tarea o destino)
     base: str = ""             # nombre final sin extensión (AAAAMMDD_HHMMSS...)
     categoria: str = ""        # whatsapp | pegatina | captura | '' (ver clasificacion.py)
+    extra: MetadatosExtra = None   # metadatos externos que se escriben en la foto
 
 
-def _analizar(ruta: Path, catalogo: Catalogo, origen: Path) -> _Tarea:
+def _analizar(ruta: Path, catalogo: Catalogo, origen: Path, externos=None) -> _Tarea:
     """Fase 1 (en paralelo): ¿ya importada? hash, fecha y propiedades."""
     t = _Tarea(ruta)
     try:
@@ -173,7 +180,12 @@ def _analizar(ruta: Path, catalogo: Catalogo, origen: Path) -> _Tarea:
         except Exception as exc:
             t.estado, t.problema, t.detalle = "danado", problema_de_excepcion(exc) or ILEGIBLE, str(exc)
             return t
-        t.fecha, t.fuente, t.base = fecha_y_nombre(ruta, datos["fecha"], datos["fuente"])
+        extra = externos.metadatos(ruta) if externos else None
+        fecha, fuente = elegir_fecha(ruta, datos["fecha"], datos["fuente"], extra)
+        t.fecha, t.fuente, t.base = fecha_y_nombre(ruta, fecha, fuente)
+        t.extra = metadatos_para_escribir(ruta, extra, t.fecha, t.fuente)
+        if t.extra is not None and datos["gps"]:
+            t.extra = replace(t.extra, gps=None)   # el GPS de la foto manda
         t.dimensiones = (datos["ancho"], datos["alto"])
         t.animado = datos["animado"]
         t.categoria = categoria(ruta.relative_to(origen), *t.dimensiones)
@@ -197,11 +209,11 @@ def _ejecutar(t: _Tarea, opciones: OpcionesFotos, extensiones_mismo_formato: set
             copiar_atomico(t.ruta, t.destino)   # WebP pequeño con transparencia: tal cual
             accion = "PEGATINA"
         else:
-            t.avisos = guardar_optimizada(t.ruta, t.destino, opciones)
+            t.avisos = guardar_optimizada(t.ruta, t.destino, opciones, t.extra)
             sin_redimensionar = not opciones.max_lado or max(t.dimensiones) <= opciones.max_lado
             if (sin_redimensionar and t.ruta.suffix.lower() in extensiones_mismo_formato
-                    and t.destino.stat().st_size >= t.tamano):
-                copiar_atomico(t.ruta, t.destino)   # recomprimir no compensa
+                    and t.destino.stat().st_size >= t.tamano
+                    and _copiar_sin_recomprimir(t)):   # recomprimir no compensa
                 accion, t.avisos = "SIN_CAMBIOS", []
             else:
                 accion = "OK"
@@ -215,6 +227,43 @@ def _ejecutar(t: _Tarea, opciones: OpcionesFotos, extensiones_mismo_formato: set
         t.destino.unlink(missing_ok=True)   # no dejar una foto sin su original
         raise
     return accion
+
+
+def _combinar_copias(tareas: list):
+    """Copias idénticas (mismo MD5; en Google, la de un álbum y la de «Fotos del AAAA»):
+    solo se importa la primera, con los álbumes, personas… de todas. `tareas`, ya en el
+    orden en que se importan."""
+    primeras = {}
+    for t in tareas:
+        if t.estado != "pendiente" or not t.hash:
+            continue
+        primera = primeras.setdefault(t.hash, t)
+        if primera is not t and t.extra is not None:
+            primera.extra = (replace(t.extra, fecha=None, zona="") if primera.extra is None
+                             else primera.extra.combinar(t.extra))
+
+
+def _copiar_sin_recomprimir(t: _Tarea) -> bool:
+    """El original tal cual a `t.destino`; con metadatos externos que añadir (solo JPEG),
+    insertados sin recomprimir. False si no se puede: se queda la versión recomprimida,
+    que sí los lleva."""
+    if t.extra is None or t.ruta.suffix.lower() not in (".jpg", ".jpeg"):
+        if t.extra is not None and (t.extra.fecha or t.extra.gps or t.extra.aporta_xmp()):
+            return False   # WebP: no se sabe insertar sin recomprimir
+        copiar_atomico(t.ruta, t.destino)
+        return True
+    try:
+        datos = jpeg_con_extra(t.ruta.read_bytes(), t.extra)
+    except (ValueError, OSError, SyntaxError):
+        return False
+    tmp = ruta_temporal(t.destino)
+    try:
+        tmp.write_bytes(datos)
+        os.replace(tmp, t.destino)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return True
 
 
 def _marcar_parecidas(tareas: list, catalogo: Catalogo, origen: Path, omitir: bool):
@@ -275,6 +324,14 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
     stats = nuevas_estadisticas()
 
     archivos = listar_archivos(origen, EXTENSIONES_FOTO)
+    externos = opciones.externos
+    omitidos_externos = []
+    if externos:
+        omitidos_externos = [(a, m) for a in archivos for m in [externos.omitir(a)] if m]
+        if omitidos_externos:
+            descartar = {a for a, _ in omitidos_externos}
+            archivos = [a for a in archivos if a not in descartar]
+            stats["editadas"] = len(omitidos_externos)
     if not archivos:
         print(f"No se encontraron fotos en {origen}")
         return stats
@@ -291,18 +348,25 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
     print(f"\n{'SIMULACIÓN' if simular else 'PROCESANDO'} — {len(archivos)} foto(s) — "
           f"{formato_pil}, calidad {opciones.calidad}, "
           f"máx. {opciones.max_lado or 'sin límite'} px — {hilos} hilo(s)\n")
+    if omitidos_externos:
+        print(f"Se omiten {len(omitidos_externos)} versión(es) editada(s): se importa su "
+              "original (ver informe)\n")
 
     danados = RegistroDanados(destino, origen, "fotos", simular)
     with Catalogo(destino, simular) as catalogo, \
             Informe(destino, "fotos", simular) as informe, \
             ThreadPoolExecutor(hilos) as pool:
         try:
+            for ruta, motivo in omitidos_externos:
+                informe.anotar("OMITIDA", ruta, detalle=motivo)
             # Fase 1: análisis en paralelo
-            tareas = list(pool.map(lambda r: _analizar(r, catalogo, origen), archivos))
+            tareas = list(pool.map(lambda r: _analizar(r, catalogo, origen, externos), archivos))
 
             # Fase 2: duplicados y nombres, en orden cronológico (ráfagas -> _01, _02...)
             reservados, vistos, pendientes, omitidas = set(), {}, [], []
             tareas.sort(key=lambda t: (t.fecha or datetime.min, str(t.ruta)))
+            if externos:
+                _combinar_copias(tareas)
             _marcar_parecidas(tareas, catalogo, origen, opciones.omitir_parecidas)
             for t in tareas:
                 rel = t.ruta.relative_to(origen)
@@ -343,9 +407,11 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
                     t.original = nombre_libre(carpeta_originales / carpeta_rel,
                                               t.ruta.stem, t.ruta.suffix, reservados)
                 if simular:
+                    anade = resumen_extra(t.extra, externos, tal_cual)
                     imprimir(f"  {rel}  ->  {carpeta_rel}/{t.destino.name}  "
-                             f"[fecha: {t.fuente}]")
+                             f"[fecha: {t.fuente}]{anade}")
                     stats["procesados"] += 1
+                    contar_extra(stats, t.extra, externos)
                 else:
                     pendientes.append(t)
 
@@ -389,9 +455,14 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
                     fecha=t.fecha.isoformat(), fuente_fecha=t.fuente,
                     bytes_antes=t.tamano, bytes_despues=despues,
                     phash=t.phash, ancho=t.dimensiones[0], alto=t.dimensiones[1])
+                detalle = list(t.avisos or [])
+                if externos:
+                    copia = accion in ("COPIADO_ANIMADO", "PEGATINA")
+                    detalle.insert(0, resumen_extra(t.extra, externos, copia).strip(" []"))
                 informe.anotar(accion, t.ruta, destino_rel, t.fecha, t.fuente,
-                               t.tamano, despues, "; ".join(t.avisos or []),
+                               t.tamano, despues, "; ".join(filter(None, detalle)),
                                ", ".join(t.parecidas or []))
+                contar_extra(stats, t.extra, externos)
                 etiqueta = {"OK": "OK", "SIN_CAMBIOS": "SIN CAMBIOS",
                             "COPIADO_ANIMADO": "ANIMADA", "PEGATINA": "PEGATINA"}[accion]
                 imprimir(f"{prefijo} {etiqueta}  {rel}  ->  {destino_rel}")

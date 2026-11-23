@@ -115,9 +115,13 @@ def _metadatos_video(ruta: Path, hay_ffmpeg: bool) -> dict:
     from videos import fecha_video, sondear
     info = (sondear(ruta) if hay_ffmpeg else None) or {}
     fecha, _ = fecha_video(ruta, info)
-    return {"fecha": fecha, "ancho": info.get("ancho", 0), "alto": info.get("alto", 0),
-            "duracion": round(info.get("duracion", 0), 1),
-            "camara": info.get("camara", ""), "gps": info.get("gps")}
+    datos = {"fecha": fecha, "ancho": info.get("ancho", 0), "alto": info.get("alto", 0),
+             "duracion": round(info.get("duracion", 0), 1),
+             "camara": info.get("camara", ""), "gps": info.get("gps")}
+    for campo in ("etiquetas", "descripcion"):   # p. ej. álbumes de Google Fotos
+        if info.get(campo):
+            datos[campo] = info[campo]
+    return datos
 
 
 # Etiquetas automáticas: casi ninguna foto de móvil trae etiquetas propias, pero
@@ -140,7 +144,8 @@ def etiquetas_automaticas(e: dict) -> list:
         ("Con estrellas", e.get("valoracion")),
         ("Verticales", alto > ancho * 1.1 > 0),
         ("Panorámicas", alto and ancho / alto >= 2),   # no las capturas de móvil (verticales)
-        ("Fecha dudosa", e.get("fuente_fecha") == "archivo"),
+        # archivo: fecha de modificación; google_subida: la de subida a Google Fotos
+        ("Fecha dudosa", e.get("fuente_fecha") in ("archivo", "google_subida")),
         ("Hora aproximada", e.get("fuente_fecha") == "nombre+hora_archivo"),
         ("Parecidas", e.get("parecidas")),
     ]

@@ -14,7 +14,7 @@ miniaturas) se guarda y se reutiliza.
 
 ```
 Exportador/
-├── main.py                 Punto de entrada (CLI: fotos, videos, audio, todo, reorganizar, galeria)
+├── main.py                 Punto de entrada (CLI: fotos, videos, audio, todo, google, reorganizar, galeria)
 ├── media_utils.py          Utilidades comunes (fechas, nombres, listado, resumen)
 ├── catalogo.py             Catálogo SQLite de lo importado y descartado + informe CSV
 ├── clasificacion.py        WhatsApp, pegatinas y capturas; carpeta de destino de cada cosa
@@ -24,6 +24,7 @@ Exportador/
 ├── fotos.py                Importación de fotos (Pillow, en paralelo)
 ├── videos.py               Importación de vídeos (ffprobe + FFmpeg, en paralelo, GPU opcional)
 ├── audio.py                Importación de notas de voz y audio (copia sin recomprimir)
+├── takeout.py              Google Fotos (Takeout): cada archivo con su JSON y sus álbumes
 ├── reorganizar.py          Ordenar una biblioteca ya importada (solo dentro de ella)
 ├── galeria.py              Índice de la galería y miniaturas
 ├── lugares.py              Lugar a partir del GPS, sin conexión (GeoNames)
@@ -72,6 +73,10 @@ python main.py videos "C:\Users\Tu\Videos" --destino "D:\Biblioteca" --codec h26
 python main.py audio  "C:\Users\Tu\Pictures\Movil" --destino "D:\Biblioteca"
 python main.py galeria "D:\Biblioteca" --servir --caras
 
+# Takeout de Google Fotos (fotos + vídeos + galería, con los metadatos de sus JSON)
+python main.py google "G:\Takeout\Google Fotos" --destino "D:\Google" --simular
+python main.py google "G:\Takeout\Google Fotos" --destino "D:\Google"
+
 # Ordenar lo que se importó con versiones anteriores (solo dentro de la biblioteca)
 python main.py reorganizar "D:\Biblioteca" --whatsapp --fechas-aproximadas --simular
 ```
@@ -80,7 +85,7 @@ Opciones principales (`python main.py <comando> -h` para verlas todas):
 
 | Opción | Comando | Qué hace |
 |---|---|---|
-| `--destino` | fotos, videos, audio, todo | Biblioteca destino (por defecto `<origen>_organizados`) |
+| `--destino` | fotos, videos, audio, todo, google | Biblioteca destino (por defecto `<origen>_organizados`) |
 | `--simular` | todos menos galeria | Muestra qué haría sin crear, mover ni modificar nada |
 | `--con-originales` | fotos, videos, todo | Guarda además una copia intacta de cada original en `originales/` |
 | `--renombrar-aproximadas` | fotos, videos, audio, todo | Renombra también lo ya importado como `AAAAMMDD_000000` (ver *Fechas aproximadas*) |
@@ -96,7 +101,7 @@ Opciones principales (`python main.py <comando> -h` para verlas todas):
 | `--hilos-video N` | videos, todo | Vídeos codificándose a la vez (1) |
 | `--hw auto\|nvenc\|qsv\|amf\|no` | videos, todo | Codificación por GPU; si falla, se repite por software (`no`) |
 | `--sin-audio` | todo | No importar notas de voz ni audios |
-| `--sin-galeria` | todo | No generar la galería al terminar |
+| `--sin-galeria` | todo, google | No generar la galería al terminar |
 | `--servir`, `--puerto` | galeria, todo | Abre la galería en el navegador |
 | `--caras` | galeria, todo | Detecta y agrupa caras para nombrarlas (requiere `opencv-python`) |
 | `--descargar-lugares`, `--descargar-modelos-caras` | galeria, todo | Descargas únicas de datos (ver arriba) |
@@ -175,6 +180,48 @@ Biblioteca/
 - **Calidad constante (CRF)** en vídeo, no bitrate fijo: escenas estáticas no desperdician espacio.
 - **Audio** sin recomprimir: las notas de voz ya son pequeñas y cualquier conversión pierde.
 
+## Google Fotos (Takeout)
+
+`python main.py google <carpeta "Google Fotos" del Takeout> --destino <biblioteca>` hace lo
+mismo que `todo` (fotos, vídeos, galería; admite sus opciones), pero lee antes todos los JSON
+del Takeout (`takeout.py`) y graba en cada archivo exportado lo que dice el suyo. Los JSON no
+se copian: su contenido queda dentro de las fotos y vídeos.
+
+| Del JSON | Foto (JPEG/WebP) | Vídeo (MP4) | Cuándo |
+|---|---|---|---|
+| `photoTakenTime` | EXIF `DateTimeOriginal` + `OffsetTimeOriginal` | `creation_time` | Solo si el archivo no trae fecha (ver abajo) |
+| `geoData` (o `geoDataExif`) | EXIF GPS | `location` (ISO 6709) | Solo si no trae GPS |
+| `people` | XMP `Iptc4xmpExt:PersonInImage` | `keywords` | Se suman a las que tenga |
+| `description` | XMP `dc:description` | `description` | Manda sobre la que tenga |
+| álbumes | XMP `dc:subject` (etiquetas) | `keywords` | Se suman |
+| `favorited` | XMP `xmp:Rating` = 5 | — | Si no tiene valoración |
+
+- **Emparejado**: `foto.jpg.supplemental-metadata.json` (o el antiguo `foto.jpg.json`),
+  `foto(1).jpg` ↔ `foto.jpg.supplemental-metadata(1).json`, títulos sin extensión
+  (`07_04_13 - 1.supplemental-metadata.json`), nombres que Google recorta y, en último caso,
+  el campo `title`. El resumen inicial dice cuántos archivos tienen JSON y cuántos no.
+- **Fecha**: EXIF/metadatos del archivo > nombre con hora > JSON > nombre sin hora > fecha del
+  archivo. En las fotos sin EXIF, `photoTakenTime` suele ser la fecha de *subida* (fotos de
+  2012 fechadas un día después), por eso un nombre como `PANO_20120714_124817` manda; si el
+  nombre solo trae el día (WhatsApp), el JSON aporta la hora si es del mismo día. La fecha del
+  JSON está en UTC y se pasa a la hora local de este equipo. En el catálogo, fuente `google`.
+- **Álbumes**: carpetas con `metadatos.json` (no las `Fotos del AAAA`). La misma foto aparece
+  en `Fotos del AAAA` y en cada álbum (a veces el álbum solo trae el JSON): se reconoce por
+  título + fecha de captura y se importa una sola vez (MD5) con los álbumes y personas de todas
+  sus copias. Se ignoran los álbumes sin nombre útil (`Sin título`, fechas como `07/04/13`).
+- **Versiones editadas** (`foto-editada.jpg`): se importa solo el original y la editada queda
+  en el informe como `OMITIDA`; si el original no está, se importa la editada.
+- **Fotos con movimiento** (`PXL_….MP.jpg` + `PXL_….MP`): la foto se recomprime como
+  cualquier otra (pierde el vídeo incrustado, y su XMP deja de anunciarlo) y el clip `.MP` se
+  importa como vídeo `.mp4` con la fecha de su foto, así ambos se llaman igual
+  (`20260627_201032.jpg` y `20260627_201032.mp4`). Igual con los Live Photos de iPhone
+  (`IMG_1.HEIC` + `IMG_1.MP4`) y las de Samsung (`X.jpg` + `X.MP4`): el vídeo no trae JSON y
+  usa el de su foto.
+- **Si recomprimir no compensa**, los metadatos se insertan igualmente sin recomprimir: en JPEG
+  se reescriben solo los segmentos EXIF/XMP (píxeles, ICC, IPTC y lo que va tras la imagen,
+  intactos) y los MP4/MOV se remultiplexan con `-c copy`.
+- Los GIF animados y las pegatinas se copian tal cual: no reciben metadatos.
+
 ## Metadatos
 
 Al exportar una foto se conservan (ver `metadatos.py`):
@@ -189,7 +236,9 @@ Al exportar una foto se conservan (ver `metadatos.py`):
 
 La rotación se aplica a los píxeles y la orientación se marca como normal en EXIF **y** XMP,
 para que ningún visor la gire dos veces. Lo único que se descarta es la miniatura EXIF
-interna y los mapas de profundidad/ganancia HDR. La fecha de modificación de la foto
+interna, los mapas de profundidad/ganancia HDR y el vídeo incrustado de las fotos con
+movimiento (Pixel, Samsung); de estas también se quita del XMP su anuncio
+(`GCamera:MotionPhoto`, `Container:Directory`), que ya no apuntaría a nada. La fecha de modificación de la foto
 exportada se pone igual a la de captura, así el explorador de archivos ordena igual que la
 galería. En vídeo se copian los metadatos del contenedor (`-map_metadata 0` y, en MP4,
 `use_metadata_tags`, que mantiene fecha local, cámara y ubicación del iPhone).
