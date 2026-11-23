@@ -220,9 +220,9 @@ class Limpieza:
             return {}
         return datos if isinstance(datos, dict) else {}
 
-    def _escribir_indice(self, datos: dict):
-        from galeria import _escribir, marcar_parecidas
-        marcar_parecidas(datos["elementos"])
+    def _escribir_indice(self, datos: dict, numeros_quitados=(), nuevos=()):
+        from galeria import _escribir, actualizar_parecidas
+        actualizar_parecidas(datos["elementos"], numeros_quitados, nuevos)
         _escribir(self.biblioteca / "galeria.json",
                   json.dumps(datos, ensure_ascii=False, separators=(",", ":")))
 
@@ -239,8 +239,6 @@ class Limpieza:
             papelera = db.execute("SELECT COUNT(*), COALESCE(SUM(bytes), 0) FROM papelera").fetchone()
         fotos = {}
         for e in elementos:
-            if not (self.biblioteca / e["src"]).is_file():
-                continue
             info = catalogo.get(e["src"])
             origen = info["origen"] if info else ""
             fotos[e["src"]] = {
@@ -257,9 +255,18 @@ class Limpieza:
         proporciones = {s: f["ancho"] / f["alto"] for s, f in fotos.items() if f["ancho"] and f["alto"]}
         revisados = [set(r) for r in decisiones["revisados"]]
         pendientes = []
-        for g in agrupar({s: e["dhash"] for s, e in ((e["src"], e) for e in elementos)
-                          if s in fotos}, proporciones, umbral):
-            if any(set(g) <= r for r in revisados):
+        if umbral == UMBRAL and any(e.get("parecidas") for e in elementos):
+            # los grupos de galeria.json (mismo umbral): evita compararlas todas otra vez
+            por_numero = {}
+            for e in elementos:
+                if e.get("parecidas"):
+                    por_numero.setdefault(e["parecidas"], []).append(e["src"])
+            candidatos = list(por_numero.values())
+        else:
+            candidatos = agrupar({e["src"]: e["dhash"] for e in elementos}, proporciones, umbral)
+        for g in candidatos:
+            g = [s for s in g if s in fotos and (self.biblioteca / s).is_file()]
+            if len(g) < 2 or any(set(g) <= r for r in revisados):
                 continue
             miembros = sorted((fotos[s] for s in g), key=lambda f: (f["fecha"], f["src"]))
             mejor, motivo = elegir_mejor(miembros)
@@ -314,7 +321,8 @@ class Limpieza:
             if movidas and indice.get("elementos") is not None:
                 indice["elementos"] = [e for e in indice["elementos"]
                                        if not isinstance(e, dict) or e.get("src") not in set(movidas)]
-                self._escribir_indice(indice)
+                self._escribir_indice(indice, numeros_quitados={
+                    elementos[s].get("parecidas") for s in movidas if elementos.get(s)})
         return {"ok": True, "quitadas": len(movidas), "liberado": liberado,
                 "deshacer": _resumen_decision(decision)}
 
@@ -435,6 +443,7 @@ class Limpieza:
                 filas = [f for s in srcs for f in
                          db.execute("SELECT * FROM papelera WHERE src = ?", (s,)).fetchall()]
             indice = self._indice()
+            numeros_quitados = set()
             for f in filas:
                 src = f["src"]
                 en_papelera = self._dentro_papelera(f["en_papelera"])
@@ -464,14 +473,17 @@ class Limpieza:
                     elemento = json.loads(f["elemento"])
                     elemento["src"] = nuevo
                     _miniatura_si_falta(self.biblioteca, destino, elemento)
+                    numeros_quitados |= {e.get("parecidas") for e in indice["elementos"]
+                                         if isinstance(e, dict) and e.get("src") == nuevo}
                     indice["elementos"] = [e for e in indice["elementos"]
                                            if not isinstance(e, dict) or e.get("src") != nuevo]
+                    elemento.pop("parecidas", None)
                     indice["elementos"].append(elemento)
             db.commit()
             if restauradas and indice.get("elementos") is not None:
                 indice["elementos"].sort(key=lambda e: (e.get("fecha", ""), e.get("src", "")),
                                          reverse=True)
-                self._escribir_indice(indice)
+                self._escribir_indice(indice, numeros_quitados, nuevos=restauradas)
             self._limpiar_carpetas_vacias()
         return restauradas
 

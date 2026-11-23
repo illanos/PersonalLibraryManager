@@ -324,3 +324,41 @@ class Servidor(Biblioteca):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ParecidasIncrementales(unittest.TestCase):
+    """`actualizar_parecidas` agrupa igual que recalcularlo todo con `marcar_parecidas`."""
+
+    @staticmethod
+    def _particion(elementos):
+        grupos = {}
+        for e in elementos:
+            if e.get("parecidas"):
+                grupos.setdefault(e["parecidas"], set()).add(e["src"])
+        return sorted(sorted(g) for g in grupos.values())
+
+    def test_quitar_y_restaurar(self):
+        import copy
+        import random
+        from galeria import actualizar_parecidas, marcar_parecidas
+        azar = random.Random(7)
+        bases = [azar.getrandbits(128) for _ in range(40)]
+        elementos = []
+        for i in range(400):   # familias de hashes parecidos entre sí
+            h = azar.choice(bases)
+            for _ in range(azar.randint(0, 8)):
+                h ^= 1 << azar.randrange(128)
+            elementos.append({"src": f"f{i}.jpg", "dhash": f"{h:032x}", "ancho": 4, "alto": 3})
+        marcar_parecidas(elementos)
+        quitados = azar.sample(elementos, 60)
+        restantes = [e for e in elementos if e not in quitados]
+        actualizar_parecidas(restantes, {e.get("parecidas") for e in quitados})
+        referencia = copy.deepcopy(restantes)
+        marcar_parecidas(referencia)
+        self.assertEqual(self._particion(restantes), self._particion(referencia))
+        vuelven = [dict(e, parecidas=None) for e in quitados[:30]]
+        restantes += vuelven
+        actualizar_parecidas(restantes, nuevos=[e["src"] for e in vuelven])
+        referencia = copy.deepcopy(restantes)
+        marcar_parecidas(referencia)
+        self.assertEqual(self._particion(restantes), self._particion(referencia))

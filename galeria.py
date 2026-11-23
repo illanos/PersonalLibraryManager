@@ -25,7 +25,7 @@ from catalogo import info_por_destino
 from media_utils import CARPETA_GALERIA, fecha_desde_nombre, fecha_mtime, listar_archivos
 from clasificacion import RE_CAPTURA, ambito, es_pegatina
 import lugares
-from similares import agrupar, dhash
+from similares import UMBRAL, _proporciones_compatibles, agrupar, con_detalle, dhash
 
 EXTENSIONES_FOTO = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"}
 EXTENSIONES_VIDEO = {".mp4", ".webm", ".mov", ".m4v"}
@@ -270,6 +270,50 @@ def marcar_parecidas(elementos: list) -> int:
         for src in grupo:
             fotos[src]["parecidas"] = n
     return len(grupos)
+
+
+def actualizar_parecidas(elementos: list, numeros_quitados=(), nuevos=()):
+    """Como `marcar_parecidas`, pero rehace solo los grupos afectados: los de número en
+    `numeros_quitados` (de fotos que se han quitado) y los que tocan las fotos `nuevos`
+    (srcs añadidos). Da el mismo agrupamiento sin comparar toda la biblioteca entre sí,
+    que con decenas de miles de fotos tarda más de un minuto."""
+    fotos = {e["src"]: e for e in elementos if e.get("dhash")}
+    proporciones = {src: e["ancho"] / e["alto"] for src, e in fotos.items()
+                    if e.get("ancho") and e.get("alto")}
+    por_numero = {}
+    for src, e in fotos.items():
+        if e.get("parecidas"):
+            por_numero.setdefault(e["parecidas"], set()).add(src)
+    tocados = {n for n in numeros_quitados if n}
+    afectados = set()
+    valores = {src: int(e["dhash"], 16) for src, e in fotos.items() if con_detalle(e["dhash"])}
+    for nuevo in nuevos:
+        if nuevo not in fotos:
+            continue
+        afectados.add(nuevo)
+        v = valores.get(nuevo)
+        if v is None:
+            continue
+        for src, w in valores.items():
+            if (src != nuevo and (v ^ w).bit_count() <= UMBRAL
+                    and _proporciones_compatibles(proporciones.get(nuevo), proporciones.get(src))):
+                afectados.add(src)
+                if fotos[src].get("parecidas"):
+                    tocados.add(fotos[src]["parecidas"])
+    for n in tocados:
+        afectados |= por_numero.get(n, set())
+    for src in afectados:
+        fotos[src].pop("parecidas", None)
+    libres = sorted(tocados)
+    siguiente = max(por_numero, default=0) + 1
+    for grupo in sorted(sorted(g) for g in agrupar({s: fotos[s]["dhash"] for s in afectados},
+                                                    proporciones)):
+        if libres:
+            n = libres.pop(0)
+        else:
+            n, siguiente = siguiente, siguiente + 1
+        for src in grupo:
+            fotos[src]["parecidas"] = n
 
 
 # ----------------------------- Generación -----------------------------
