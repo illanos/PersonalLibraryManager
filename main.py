@@ -199,7 +199,7 @@ def construir_parser() -> argparse.ArgumentParser:
     p_panel = sub.add_parser(
         "panel", help="Panel web local para elegir opciones, lanzar y ver el progreso",
         description="Abre en el navegador un panel para configurar y lanzar importaciones, "
-                    "galerías y reorganizaciones, con su progreso en directo.")
+                    "galerías, reorganizaciones y fusiones, con su progreso en directo.")
     p_panel.add_argument("--puerto", type=int, default=8765,
                          help="Puerto del panel (por defecto 8765; si está ocupado, el siguiente)")
     p_panel.add_argument("--sin-navegador", action="store_true",
@@ -349,9 +349,11 @@ def main(argv=None):
         if not hay_pillow():
             sys.exit(MENSAJE_PILLOW)
         from fusionar import OpcionesFusion, fusionar
-        fusionar(args.coleccion.resolve(), args.destino.resolve(), args.simular, OpcionesFusion(
-            umbral=args.umbral, margen_dias=args.margen_dias, max_lado=args.max_lado_fotos,
-            calidad=args.calidad, hilos=args.hilos, galeria=not args.sin_galeria))
+        progreso("inicio", "fusionar")
+        progreso("fin", "fusionar", resumen=fusionar(
+            args.coleccion.resolve(), args.destino.resolve(), args.simular, OpcionesFusion(
+                umbral=args.umbral, margen_dias=args.margen_dias, max_lado=args.max_lado_fotos,
+                calidad=args.calidad, hilos=args.hilos, galeria=not args.sin_galeria)))
         return
 
     if args.comando == "galeria":

@@ -241,8 +241,16 @@
           </div>
           <div class="ayuda">Solo se lee: nunca se mueve, modifica ni borra nada en ella.</div>
         </div>
-        <div class="campo" data-para="importar">
-          <label for="c-destino">Biblioteca destino</label>
+        <div class="campo" data-para="fusionar">
+          <label for="c-coleccion">Colección a añadir</label>
+          <div class="ruta">
+            <input type="text" id="c-coleccion" data-dest="coleccion" list="recientes" placeholder="D:\Google" spellcheck="false" autocomplete="off">
+            <button type="button" class="boton" data-examinar="coleccion" data-titulo="Colección a añadir (solo se lee)">Examinar…</button>
+          </div>
+          <div class="ayuda" id="info-coleccion">Otra biblioteca del exportador (p. ej. la de Google Fotos) o cualquier carpeta con fotos y vídeos. Solo se lee: nunca se toca.</div>
+        </div>
+        <div class="campo" data-para="importar fusionar">
+          <label for="c-destino" id="l-destino">Biblioteca destino</label>
           <div class="ruta">
             <input type="text" id="c-destino" data-dest="destino" list="recientes" placeholder="Por defecto: &lt;origen&gt;_organizados" spellcheck="false" autocomplete="off">
             <button type="button" class="boton" data-examinar="destino" data-titulo="Biblioteca destino">Examinar…</button>
@@ -350,6 +358,7 @@ const ICONOS = {
   audio: '<path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
   galeria: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   reorganizar: '<path d="M4 7h11l-3-3M20 17H9l3 3"/>',
+  fusionar: '<path d="M6 3v6a6 6 0 0 0 6 6v6M18 3v6a6 6 0 0 1-6 6"/><path d="M9 18l3 3 3-3"/>',
 };
 const ACCIONES = [
   ["todo", "Importar todo", "Fotos, vídeos y audio, y la galería al terminar"],
@@ -358,9 +367,11 @@ const ACCIONES = [
   ["audio", "Solo audio", "Notas de voz, sin recomprimir"],
   ["galeria", "Galería", "Crear o actualizar la galería web"],
   ["reorganizar", "Reorganizar", "Ordenar una biblioteca ya importada"],
+  ["fusionar", "Fusionar", "Añadir otra colección sin repetir"],
 ];
 const BOTON = { todo: "Importar todo", fotos: "Importar fotos", videos: "Importar vídeos",
-                audio: "Importar audio", galeria: "Generar galería", reorganizar: "Reorganizar" };
+                audio: "Importar audio", galeria: "Generar galería", reorganizar: "Reorganizar",
+                fusionar: "Fusionar" };
 // Positional de cada acción en main.py -> campo del formulario
 const POSICIONAL = { galeria: ["carpeta", "biblioteca"], reorganizar: ["biblioteca", "biblioteca"] };
 
@@ -377,6 +388,10 @@ const SECCIONES = [
     campos: ["caras", "descargar_lugares", "descargar_modelos_caras", "regenerar"] },
   { id: "reorganizar", titulo: "Qué reorganizar", para: ["reorganizar"], abierta: true,
     campos: ["whatsapp", "fechas_aproximadas", "pegatinas_aparte"] },
+  { id: "comparar", titulo: "Cómo comparar", para: ["fusionar"],
+    campos: ["umbral", "margen_dias"] },
+  { id: "anadir", titulo: "Lo que se añade", para: ["fusionar"],
+    campos: ["max_lado_fotos", "calidad", "hilos", "sin_galeria"] },
 ];
 const CAMPOS = {
   formato: { etiqueta: "Formato", lista: { jpeg: "JPEG (universal)", webp: "WebP (~30 % menos peso)" } },
@@ -401,9 +416,19 @@ const CAMPOS = {
   regenerar: { etiqueta: "Regenerar todo desde cero" },
   whatsapp: { etiqueta: "Separar lo de WhatsApp" },
   fechas_aproximadas: { etiqueta: "Renombrar fechas aproximadas" },
+  umbral: { etiqueta: "Diferencia máxima para ser la misma foto", sufijo: "bits", sugerencias: [0, 3, 5, 8, 12], cero: "solo copias casi exactas" },
+  margen_dias: { etiqueta: "Días de margen al comparar", sugerencias: [0, 1, 2, 3], sufijo: "día(s)", cero: "solo el mismo día" },
 };
-const FUERA_DE_SECCIONES = new Set(["origen", "destino", "carpeta", "biblioteca", "simular"]);
-const NOMBRES_FASE = { fotos: "fotos", videos: "vídeos", audio: "audios", galeria: "galería", reorganizar: "biblioteca" };
+const FUERA_DE_SECCIONES = new Set(["origen", "coleccion", "destino", "carpeta", "biblioteca", "simular"]);
+const NOMBRES_FASE = { fotos: "fotos", videos: "vídeos", audio: "audios", galeria: "galería", reorganizar: "biblioteca", fusionar: "" };
+// La biblioteca de destino es la misma casilla al importar y al fusionar, con otros textos
+const TEXTOS_DESTINO = {
+  importar: { etiqueta: "Biblioteca destino", placeholder: "Por defecto: <origen>_organizados",
+              ayuda: "Donde se guarda todo, ordenado por fecha. Si ya existe, solo se añade lo nuevo." },
+  fusionar: { etiqueta: "Biblioteca a la que se añade", placeholder: "D:\\Biblioteca",
+              ayuda: "La biblioteca que ya tienes: se le añade lo que no tenga y, de dos copias iguales, se queda la mejor (la peor va a su papelera, restaurable)." },
+};
+const modoCarpetas = (c) => destsDe(c).has("origen") ? "importar" : destsDe(c).has("coleccion") ? "fusionar" : "biblioteca";
 
 // ---------------------------------------------------------------------------
 const $ = (s, el = document) => el.querySelector(s);
@@ -576,12 +601,16 @@ function elegirComando(c) {
   comando = c;
   pintarAcciones();
   const dests = destsDe(c);
-  const esImportar = dests.has("origen");
-  $$('[data-para="importar"]').forEach((el) => (el.hidden = !esImportar));
-  $$('[data-para="biblioteca"]').forEach((el) => (el.hidden = esImportar));
-  if (!esImportar && !valores.biblioteca && ultimaComprobacion && ultimaComprobacion.carpeta && ultimaComprobacion.comando !== c) {
+  const modo = modoCarpetas(c);
+  $$("#carpetas [data-para]").forEach((el) => (el.hidden = !el.dataset.para.split(" ").includes(modo)));
+  if (modo === "biblioteca" && !valores.biblioteca && ultimaComprobacion && ultimaComprobacion.carpeta && ultimaComprobacion.comando !== c) {
     valores.biblioteca = ultimaComprobacion.carpeta; aplicarValores();
   }
+  const textosDestino = TEXTOS_DESTINO[modo === "fusionar" ? "fusionar" : "importar"];
+  $("#l-destino").textContent = textosDestino.etiqueta;
+  $("#c-destino").placeholder = textosDestino.placeholder;
+  $("#info-destino").textContent = textosDestino.ayuda; $("#info-destino").className = "ayuda";
+  $('[data-examinar="destino"]').dataset.titulo = textosDestino.etiqueta;
   for (const det of $$("details.seccion")) {
     const para = det.dataset.para ? det.dataset.para.split(" ") : null;   // null: según las opciones
     let visibles = 0;
@@ -611,6 +640,8 @@ function resumirSecciones() {
               d("renombrar_aproximadas") && "renombrar aproximadas" ],
     galeria: [ d("caras") && "caras", d("regenerar") && "regenerar", (d("descargar_lugares") || d("descargar_modelos_caras")) && "descargas" ],
     reorganizar: [ d("whatsapp") && "WhatsApp", d("fechas_aproximadas") && "fechas aproximadas" ],
+    comparar: [ `≤ ${v.umbral} bits`, +v.margen_dias ? `±${v.margen_dias} día${+v.margen_dias === 1 ? "" : "s"}` : "solo el mismo día" ],
+    anadir: [ +v.max_lado_fotos ? `fotos hasta ${v.max_lado_fotos} px` : "fotos sin reducir", d("sin_galeria") && "sin galería" ],
   };
   for (const det of $$("details.seccion")) {
     const partes = (txt[det.dataset.seccion] || []).filter(Boolean);
@@ -639,9 +670,15 @@ async function comprobar() {
   msg.className = "mensaje-form " + (esPista ? "pista" : "error");
   msg.textContent = (r.error || "").replace(/^Indica qué reorganizar.*/, "Elige al menos una opción en «Qué reorganizar».");
   // Información sobre la biblioteca destino
-  const info = destsDe(comando).has("origen") ? $("#info-destino") : $("#info-biblioteca");
+  const modo = modoCarpetas(comando);
+  const info = modo === "biblioteca" ? $("#info-biblioteca") : $("#info-destino");
   if (!r.error && r.carpeta) {
-    if (destsDe(comando).has("origen")) {
+    if (modo === "fusionar") {
+      info.textContent = r.biblioteca_existe
+        ? "Biblioteca encontrada: se le añadirá lo que no tenga." + (r.galeria_existe ? " Su galería se actualizará al terminar." : "")
+        : "Esta carpeta no tiene catálogo del exportador: se comparará igualmente con lo que contenga.";
+      info.className = "ayuda" + (r.biblioteca_existe ? " ok" : " aviso");
+    } else if (modo === "importar") {
       const usada = valores.destino ? "" : `Se usará ${r.carpeta}. `;
       info.textContent = usada + (r.biblioteca_existe ? "Biblioteca existente: solo se añadirá lo nuevo."
                                                         : "Se creará una biblioteca nueva.");
@@ -759,8 +796,8 @@ function pintarTrabajo(t) {
   if (enMarcha) {
     const barra = $("#p-barra");
     if (activa) {
-      const nombre = NOMBRES_FASE[activa.fase] || activa.fase;
-      $("#p-paso").textContent = activa.paso ? `${activa.paso} ${nombre}` : `${activa.titulo}: empezando…`;
+      const nombre = NOMBRES_FASE[activa.fase] ?? activa.fase;
+      $("#p-paso").textContent = activa.paso ? `${activa.paso} ${nombre}`.trim() : `${activa.titulo}: empezando…`;
       $("#p-cuenta").textContent = activa.total ? `${num(activa.hecho)} / ${num(activa.total)} · ${Math.floor(100 * activa.hecho / activa.total)} %` : "";
       barra.classList.toggle("indeterminada", !activa.total);
       barra.firstElementChild.style.width = activa.total ? `${(100 * activa.hecho / activa.total).toFixed(1)}%` : "";
@@ -821,6 +858,20 @@ function cifras(f, simular) {
     c(num(r.nuevos), "nuevos o cambiados"), r.grupos_parecidas ? c(num(r.grupos_parecidas), "grupos de parecidas") : null];
   if (f.fase === "reorganizar") return [c(num(r.movidos), simular ? "se moverían" : "movidos o renombrados", "principal"),
     r.errores ? c(num(r.errores), "errores", "mal") : null];
+  if (f.fase === "fusionar") {
+    const antes = (r.ya_fusionadas || 0) + (r.ya_comparadas || 0);
+    return [c(num(r.anadidas), simular ? "nuevas a añadir" : "nuevas añadidas", "principal"),
+      c(num(r.sustituidas), simular ? "mejores (sustituirían)" : "mejores (sustituyen)"),
+      c(num(r.ya_estaban), "ya estaban (igual o mejor)"),
+      r.repetidas ? c(num(r.repetidas), "repetidas en la colección") : null,
+      r.quitadas ? c(num(r.quitadas), "quitadas antes a mano") : null,
+      r.parecidas ? c(num(r.parecidas), "parecidas (revísalas)") : null,
+      antes ? c(num(antes), "ya fusionadas antes") : null,
+      r.omitidos ? c(num(r.omitidos), "omitidos", "mal") : null,
+      r.errores ? c(num(r.errores), "errores", "mal") : null,
+      r.bytes_anadidos ? c(bytes(r.bytes_anadidos), simular ? "a añadir (aprox.)" : "añadidos") : null,
+      r.bytes_papelera ? c(bytes(r.bytes_papelera), "a la papelera (restaurable)") : null];
+  }
   const n = NOMBRES_FASE[f.fase];
   const algo = ["procesados", "ya_importados", "duplicados", "omitidos", "danados", "errores", "parecidas_omitidas", "descartadas"];
   if (!algo.some((k) => r[k])) return [c("—", `no había ${n}`)];
@@ -863,6 +914,10 @@ function pintarAccionesFinales(t, enMarcha) {
     botones.push(crear("button", { type: "button", class: "boton", onclick: () => abrirGaleria(t.carpeta) }, icono("galeria"), "Abrir la galería"));
   botones.push(crear("button", { type: "button", class: "boton", onclick: () => abrirCarpeta(t.carpeta) },
     crear("span", {}, "Abrir la carpeta")));
+  const informe = (t.fases.find((f) => f.fase === "fusionar" && f.resumen && f.resumen.informe) || {}).resumen;
+  if (informe)   // el CSV con cada decisión (en simulación, en la carpeta temporal)
+    botones.push(crear("button", { type: "button", class: "boton", title: informe.informe,
+      onclick: () => abrirCarpeta(informe.informe.replace(/[\\/][^\\/]*$/, "")) }, "Ver el informe (CSV)"));
   if (!t.simular || t.estado !== "terminado")
     botones.push(crear("button", { type: "button", class: "boton", onclick: () => repetir(t, t.simular) }, "Repetir"));
   cont.replaceChildren(...botones);
@@ -911,6 +966,7 @@ function pintarHistorial(historial) {
     const resumen = Object.entries(h.resumen || {}).map(([fase, r]) => {
       if (fase === "galeria") return `galería: ${num(r.fotos + r.videos + r.audios)} elementos`;
       if (fase === "reorganizar") return `${num(r.movidos)} reorganizados`;
+      if (fase === "fusionar") return `${num(r.anadidas)} nuevas · ${num(r.sustituidas)} mejores · ${num(r.ya_estaban)} ya estaban`;
       return `${num(r.procesados)} ${NOMBRES_FASE[fase] || fase}`;
     }).join(" · ");
     const estados = { terminado: "", detenido: " · detenido", error: " · con error" };
@@ -948,7 +1004,7 @@ async function iniciar() {
     try { await api("/api/detener", {}); consultar(true); } catch (e) { notificar(e.message, true); }
   });
   $("#restablecer").addEventListener("click", () => {
-    const carpetas = { origen: valores.origen, destino: valores.destino, biblioteca: valores.biblioteca };
+    const carpetas = { origen: valores.origen, coleccion: valores.coleccion, destino: valores.destino, biblioteca: valores.biblioteca };
     valores = { ...defectos, ...carpetas }; aplicarValores(); cambio();
     notificar("Opciones restablecidas (las carpetas se mantienen).");
   });

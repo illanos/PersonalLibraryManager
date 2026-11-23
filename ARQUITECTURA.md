@@ -73,8 +73,9 @@ La forma más cómoda es el **panel web**: doble clic en `panel.bat` o
 python main.py panel        # abre http://127.0.0.1:8765/ en el navegador
 ```
 
-Ahí se elige qué hacer (importar todo, solo fotos/vídeos/audio, galería o reorganizar), las
-carpetas (con *Examinar…*) y las opciones, y se lanza con **Simular** o **Importar**. Ver
+Ahí se elige qué hacer (importar todo, solo fotos/vídeos/audio, galería, reorganizar o
+fusionar otra colección), las carpetas (con *Examinar…*) y las opciones, y se lanza con
+**Simular** o **Importar**. Ver
 *El panel web* más abajo. Lo mismo desde la terminal:
 
 ```powershell
@@ -383,6 +384,11 @@ accesible desde tu equipo; si el puerto está ocupado, prueba los siguientes) y 
   título de la pestaña. Al terminar, resumen por fase (importados, ya estaban, duplicados,
   dañados, errores, peso antes → después) y botones para abrir la galería o la carpeta, y
   tras una simulación, para ejecutarlo de verdad con las mismas opciones.
+- **Fusionar**: pide la colección a añadir y la biblioteca (la misma casilla que el destino
+  al importar), con las secciones *Cómo comparar* (bits y días de margen) y *Lo que se
+  añade*. El progreso muestra la lectura de las dos colecciones, la comparación por días y
+  la copia; el resumen, cuántas son nuevas, mejores (sustituyen), ya estaban, repetidas y
+  parecidas, el espacio, y un botón para abrir la carpeta del informe CSV.
 - **Detener** equivale a Ctrl+C: el programa se detiene en orden (sin `.part` ni FFmpeg en
   marcha; en Windows se envía Ctrl+Break, que `main.py` trata igual que Ctrl+C). Si no
   responde en 45 s, se fuerza el cierre.

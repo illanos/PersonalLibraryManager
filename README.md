@@ -73,9 +73,9 @@ python main.py panel
 ```
 
 Se abre `http://127.0.0.1:8765/` en el navegador. Elige qué hacer (importar todo, solo fotos,
-vídeos o audio, generar la galería o reorganizar), las carpetas y las opciones, pulsa
-**Simular** para ver qué pasaría y después **Importar**. Debajo del formulario aparece el
-comando equivalente por si prefieres la terminal.
+vídeos o audio, generar la galería, reorganizar o **fusionar** otra colección), las carpetas y
+las opciones, pulsa **Simular** para ver qué pasaría y después **Importar** (o **Fusionar**).
+Debajo del formulario aparece el comando equivalente por si prefieres la terminal.
 
 ## Ejemplos de uso desde la terminal
 

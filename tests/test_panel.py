@@ -76,6 +76,23 @@ class Esquema(unittest.TestCase):
         with self.assertRaises(panel.ErrorPanel):
             panel.construir_argv("borrar_todo", {})
 
+    def test_fusionar(self):
+        opciones = {o["dest"]: o for o in panel.ESQUEMA["fusionar"]["opciones"]}
+        self.assertTrue(opciones["coleccion"]["posicional"])
+        self.assertTrue(opciones["destino"]["obligatoria"])
+        self.assertEqual((opciones["umbral"]["tipo"], opciones["umbral"]["min"],
+                          opciones["umbral"]["max"], opciones["umbral"]["defecto"]),
+                         ("numero", 0, 12, 5))
+        self.assertTrue(panel.ESQUEMA["fusionar"]["simular"])
+        with self.assertRaisesRegex(panel.ErrorPanel, "^Elige la colección"):
+            panel.construir_argv("fusionar", {"destino": "bib"})
+        with self.assertRaisesRegex(panel.ErrorPanel, "^Elige la biblioteca"):
+            panel.construir_argv("fusionar", {"coleccion": "google"})
+        argv = panel.construir_argv("fusionar", {"coleccion": "google", "destino": "bib",
+                                                 "umbral": "3", "margen_dias": "1"}, simular=True)
+        self.assertEqual(argv, ["fusionar", "google", "--destino", "bib", "--simular",
+                                "--umbral", "3"])
+
     def test_linea_de_comandos_entrecomilla(self):
         linea = panel.linea_de_comandos(["fotos", r"C:\Mis fotos"])
         self.assertIn('"C:\\Mis fotos"' if os.name == "nt" else "'C:\\Mis fotos'", linea)
@@ -108,6 +125,23 @@ class Validacion(CasoConCarpeta):
         self.assertEqual(r["fases"], ["fotos", "videos", "reorganizar"])
         r = panel.comprobar("galeria", {"carpeta": str(self.dir / "movil")})
         self.assertEqual(r["fases"], ["galeria"])
+
+    def test_fusionar_carpetas_y_fases(self):
+        (self.dir / "google").mkdir()
+        (self.dir / "bib").mkdir()
+        valores = {"coleccion": str(self.dir / "google"), "destino": str(self.dir / "bib")}
+        r = panel.comprobar("fusionar", valores)
+        self.assertEqual(Path(r["carpeta"]), (self.dir / "bib").resolve())
+        self.assertEqual(r["fases"], ["fusionar"])          # sin galería que actualizar
+        (self.dir / "bib" / "galeria.json").write_text("{}", encoding="utf-8")
+        self.assertEqual(panel.comprobar("fusionar", valores)["fases"], ["fusionar", "galeria"])
+        self.assertEqual(panel.comprobar("fusionar", valores, simular=True)["fases"], ["fusionar"])
+        with self.assertRaisesRegex(panel.ErrorPanel, "ninguna dentro de la otra"):
+            panel.comprobar("fusionar", {"coleccion": str(self.dir / "bib"),
+                                         "destino": str(self.dir / "bib")})
+        with self.assertRaisesRegex(panel.ErrorPanel, "no existe"):
+            panel.comprobar("fusionar", {"coleccion": str(self.dir / "nada"),
+                                         "destino": str(self.dir / "bib")})
 
 
 class EventosDeProgreso(CasoConCarpeta):
@@ -227,6 +261,25 @@ class Ejecucion(CasoConCarpeta):
         # Un panel nuevo continúa la numeración
         self.assertEqual(panel.Panel(self.dir / "prefs" / "panel.json").siguiente,
                          trabajo.numero + 1)
+
+    def test_fusion_real_con_progreso_y_resumen(self):
+        crear_foto(self.dir / "google" / "IMG_1.jpg", color=(20, 100, 150))
+        crear_foto(self.dir / "google" / "IMG_2.jpg", color=(200, 60, 40), fecha="2023:09:01 10:00:00")
+        (self.dir / "bib").mkdir()
+        valores = {"coleccion": str(self.dir / "google"), "destino": str(self.dir / "bib")}
+        trabajo = self.panel.ejecutar("fusionar", valores, simular=True)
+        self.assertTrue(esperar(lambda: trabajo.estado not in ("en_marcha", "deteniendo")))
+        estado = trabajo.estado_json()
+        self.assertEqual(estado["estado"], "terminado", estado["registro"])
+        fase = estado["fases"][0]
+        self.assertEqual((fase["fase"], fase["estado"]), ("fusionar", "hecha"))
+        self.assertEqual(fase["resumen"]["anadidas"], 2)
+        self.assertTrue(fase["resumen"]["informe"].endswith(".csv"))
+        Path(fase["resumen"]["informe"]).unlink(missing_ok=True)
+        self.assertEqual(list((self.dir / "bib").iterdir()), [])   # simulación: nada
+        niveles = {texto.split()[0]: nivel for nivel, texto in estado["registro"]["lineas"]
+                   if texto.strip()}
+        self.assertEqual(niveles.get("SIMULACIÓN"), "titulo")
 
     def test_detener(self):
         previa = {"argv": [], "linea": "", "carpeta": str(self.dir), "fases": ["fotos"]}

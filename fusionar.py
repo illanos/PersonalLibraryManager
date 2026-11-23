@@ -55,7 +55,7 @@ from fotos import CALIDAD, EXTENSIONES_FOTO, EXTENSIONES_HEIF, HEIF_DISPONIBLE, 
 from galeria import EXTENSIONES_FOTO as FOTO_GALERIA, EXTENSIONES_VIDEO as VIDEO_GALERIA, VERSION_INDICE
 from media_utils import (
     CARPETA_GALERIA, CARPETA_INTERNA, fecha_desde_nombre, fecha_mtime, fecha_y_nombre,
-    formato_bytes, hash_archivo, imprimir, listar_archivos, nombre_libre, ruta_temporal,
+    formato_bytes, hash_archivo, imprimir, listar_archivos, nombre_libre, progreso, ruta_temporal,
 )
 from metadatos import camara_exif, fecha_exif
 from similares import UMBRAL, UMBRAL_COPIA, _proporciones_compatibles, con_detalle, dhash_imagen, distancia
@@ -402,7 +402,10 @@ def planificar(coleccion: list, biblioteca: list, papelera: list = (), descartad
     descartadas = set(descartadas)
     orden = sorted(coleccion, key=lambda e: (_clave_calidad(e, opciones.max_lado), e.rel),
                    reverse=True)
-    for c in orden:
+    for n, c in enumerate(orden, 1):
+        if n % 200 == 0 or n == len(orden):
+            progreso("avance", "fusionar", paso="Comparando por días", hecho=n, total=len(orden),
+                     archivo=c.rel)
         if c.accion:           # error al leerla
             continue
         if c.hash_original and c.hash_original in descartadas:
@@ -606,7 +609,14 @@ def _leer_todos(rutas, carpeta, lado, filas, indice, pool, hay_ffmpeg, max_lado,
             errores.append((resultado, error))
         if n % 5000 == 0:
             imprimir(f"  … {n}/{len(rutas)}")
+        if n % 100 == 0 or n == len(rutas):
+            progreso("avance", "fusionar", paso=f"Leyendo {nombre}", hecho=n, total=len(rutas),
+                     archivo=Path(ruta_de(resultado)).name)
     return elementos, errores
+
+
+def ruta_de(resultado) -> Path:
+    return resultado.ruta if isinstance(resultado, Elemento) else resultado
 
 
 def _precalcular_fotogramas(coleccion: list, biblioteca: list, margen: int, pool):
@@ -627,7 +637,9 @@ def _precalcular_fotogramas(coleccion: list, biblioteca: list, margen: int, pool
                     tareas[(id(e), t)] = (e, t)
     if tareas:
         print(f"Comparando fotogramas de vídeo ({len(tareas)})…")
-        list(pool.map(lambda par: _marco(*par), tareas.values()))
+        for n, _ in enumerate(pool.map(lambda par: _marco(*par), tareas.values()), 1):
+            if n % 10 == 0 or n == len(tareas):
+                progreso("avance", "fusionar", paso="Comparando vídeos", hecho=n, total=len(tareas))
 
 
 # ----------------------------- Escritura -----------------------------
@@ -933,6 +945,8 @@ def fusionar(coleccion: Path, biblioteca: Path, simular: bool = False,
             raise
 
     _imprimir_resumen(stats, simular, informe.ruta if informe.filas else None)
+    if informe.filas:   # el panel ofrece abrir su carpeta
+        stats["informe"] = str(informe.ruta)
     return stats
 
 
@@ -956,9 +970,12 @@ def _ejecutar(escribir, biblioteca, opciones, catalogo, informe, pool, hashes_bi
         for c in escribir:
             ejecutor = pool_videos if (c.tipo == "video" and c.convertir) else pool
             futuros[ejecutor.submit(_preparar, c, biblioteca, opciones)] = c
+        progreso("avance", "fusionar", paso="Copiando a la biblioteca", hecho=0, total=len(futuros))
         for n, futuro in enumerate(as_completed(futuros), 1):
             c = futuros[futuro]
             prefijo = f"  [{n}/{len(futuros)}]"
+            progreso("avance", "fusionar", paso="Copiando a la biblioteca", hecho=n,
+                     total=len(futuros), archivo=c.rel)
             detalle = _detalle(c)
             try:
                 modo = futuro.result()
@@ -1013,7 +1030,10 @@ def _ejecutar(escribir, biblioteca, opciones, catalogo, informe, pool, hashes_bi
         if opciones.galeria:
             print()
             from galeria import generar_galeria
+            progreso("fin", "fusionar", resumen=stats)   # en el panel, la galería va aparte
+            progreso("inicio", "galeria")
             generar_galeria(biblioteca)
+            progreso("fin", "galeria")
         elif movidas:
             _quitar_de_galeria(biblioteca, movidas)
     elif hubo_cambios and opciones.galeria:
