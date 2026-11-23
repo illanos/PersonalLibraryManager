@@ -27,7 +27,7 @@ import threading
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
-from catalogo import Catalogo, ESPERA_BLOQUEO, ruta_catalogo
+from catalogo import ESQUEMA, Catalogo, ESPERA_BLOQUEO, ruta_catalogo
 from clasificacion import es_whatsapp
 from media_utils import CARPETA_INTERNA, CARPETAS_EXCLUIDAS, hash_archivo
 from similares import UMBRAL, agrupar
@@ -140,12 +140,17 @@ class Limpieza:
     # --- base de datos (el mismo catálogo SQLite) ---
 
     @contextlib.contextmanager
-    def _db(self):
+    def _db(self, solo_leer: bool = False):
         """Conexión al catálogo: confirma al salir (también si hubo error: lo ya movido
-        queda anotado y se puede restaurar) y siempre se cierra."""
-        with Catalogo(self.biblioteca):    # crea/migra el catálogo (y `descartadas`)
-            pass
-        db = sqlite3.connect(ruta_catalogo(self.biblioteca), timeout=ESPERA_BLOQUEO)
+        queda anotado y se puede restaurar) y siempre se cierra. Para solo leer, si la
+        carpeta aún no tiene catálogo no se crea (se usa uno vacío en memoria)."""
+        if solo_leer and not ruta_catalogo(self.biblioteca).exists():
+            db = sqlite3.connect(":memory:")
+            db.executescript(ESQUEMA)
+        else:
+            with Catalogo(self.biblioteca):    # crea/migra el catálogo (y `descartadas`)
+                pass
+            db = sqlite3.connect(ruta_catalogo(self.biblioteca), timeout=ESPERA_BLOQUEO)
         try:
             db.row_factory = sqlite3.Row
             db.executescript(ESQUEMA_PAPELERA)
@@ -228,7 +233,7 @@ class Limpieza:
         umbral = max(0, min(UMBRAL_MAX, int(umbral)))
         elementos = [e for e in self._indice().get("elementos", [])
                      if isinstance(e, dict) and e.get("tipo") == "foto" and e.get("dhash")]
-        with self.lock, self._db() as db:
+        with self.lock, self._db(solo_leer=True) as db:
             catalogo = self._catalogo_por_destino(db)
             decisiones = self._leer_decisiones()
             papelera = db.execute("SELECT COUNT(*), COALESCE(SUM(bytes), 0) FROM papelera").fetchone()
@@ -270,6 +275,7 @@ class Limpieza:
             "grupos": pendientes,
             "liberable": sum(g["liberable"] for g in pendientes),
             "revisados": len(decisiones["revisados"]),
+            "decididos": len(decisiones["historial"]),
             "deshacer": _resumen_decision(decisiones["historial"][-1]) if decisiones["historial"] else None,
             "papelera": {"fotos": papelera[0], "bytes": papelera[1]},
         }
@@ -335,11 +341,13 @@ class Limpieza:
             if not decisiones["historial"]:
                 raise ErrorLimpieza("no hay nada que deshacer")
             decision = decisiones["historial"][-1]
-            restauradas = []
+            restauradas, recuperado = [], 0
             if decision.get("quitar"):
                 with self._db() as db:
-                    en_papelera = {f["src"] for f in db.execute(
-                        "SELECT src FROM papelera WHERE decision = ?", (decision["id"],))}
+                    filas = db.execute("SELECT src, bytes FROM papelera WHERE decision = ?",
+                                       (decision["id"],)).fetchall()
+                en_papelera = {f["src"] for f in filas}
+                recuperado = sum(f["bytes"] for f in filas)
                 if en_papelera != set(decision["quitar"]):
                     raise ErrorLimpieza("esas fotos ya no están en la papelera (¿se vació?): "
                                         "no se puede deshacer")
@@ -354,6 +362,7 @@ class Limpieza:
             self._guardar_decisiones(decisiones)
             ultima = decisiones["historial"][-1] if decisiones["historial"] else None
         return {"ok": True, "deshecha": _resumen_decision(decision), "restauradas": restauradas,
+                "recuperado": recuperado,
                 "deshacer": _resumen_decision(ultima) if ultima else None}
 
     # --- papelera ---
@@ -391,7 +400,7 @@ class Limpieza:
         return bytes_
 
     def contenido_papelera(self) -> dict:
-        with self.lock, self._db() as db:
+        with self.lock, self._db(solo_leer=True) as db:
             filas = db.execute("SELECT * FROM papelera ORDER BY fecha DESC, src").fetchall()
         fotos = []
         for f in filas:

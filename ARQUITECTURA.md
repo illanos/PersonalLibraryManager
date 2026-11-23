@@ -19,6 +19,7 @@ Exportador/
 ├── catalogo.py             Catálogo SQLite de lo importado y descartado + informe CSV
 ├── clasificacion.py        WhatsApp, pegatinas y capturas; carpeta de destino de cada cosa
 ├── similares.py            Hash perceptual (dHash) y grupos de fotos parecidas
+├── limpieza.py             «Limpiar repetidas»: grupos, mejor copia, papelera, decisiones
 ├── danados.py              Detección e informe de archivos dañados
 ├── metadatos.py            Lectura y conservación de metadatos de fotos (EXIF/XMP/IPTC)
 ├── fotos.py                Importación de fotos (Pillow, en paralelo)
@@ -30,7 +31,8 @@ Exportador/
 ├── caras.py                Detección y agrupación local de caras (OpenCV, opcional)
 ├── descargas.py            Descargas únicas de datos opcionales a datos/
 ├── galeria_plantilla.html  Interfaz web (HTML + JS sin dependencias)
-├── servidor.py             Servidor local de la galería (favoritos y nombres de caras)
+├── limpiar_plantilla.html  Página «Limpiar repetidas» (la sirve servidor.py como limpiar.html)
+├── servidor.py             Servidor local de la galería (favoritos, caras y limpieza)
 ├── tests/                  Pruebas automáticas (unittest)
 ├── requirements.txt
 └── ARQUITECTURA.md         Este documento
@@ -116,6 +118,8 @@ Biblioteca/
 ├── .exportador/catalogo.sqlite              qué se importó o descartó, de dónde y con qué resultado
 ├── .exportador/informes/fotos_*.csv         una fila por archivo y ejecución (abre en Excel)
 ├── .exportador/informes/danados_*.csv       archivos dañados de cada ejecución
+├── .exportador/papelera/…                   fotos quitadas con «Limpiar repetidas» (misma ruta)
+├── .exportador/limpieza.json                decisiones de «Limpiar repetidas» (seguir otro día)
 ├── galeria.html + galeria.json              galería web
 └── _galeria/thumbs, favoritos.json, caras.sqlite, personas.json
 ```
@@ -132,6 +136,8 @@ Biblioteca/
   reprocesar. Lo descartado a propósito (dañados, peor copia de unas parecidas) queda en la
   tabla `descartes` y tampoco se vuelve a leer mientras no cambie. Si borras un archivo de la
   biblioteca, la siguiente importación lo vuelve a traer: el catálogo nunca hace perder fotos.
+  La excepción son las fotos quitadas con *Limpiar repetidas*: su MD5 queda en la tabla
+  `descartadas` y no se vuelven a importar (ni aunque se vacíe la papelera).
   Los catálogos antiguos se amplían solos (columnas y tablas nuevas) al abrirlos.
 - **Fecha de captura**: fotos `EXIF DateTimeOriginal → DateTimeDigitized → DateTime`;
   vídeos `creationdate de Apple (hora local) → creation_time (UTC, se pasa a hora local)`;
@@ -212,6 +218,8 @@ Se conservan al exportar y aparecen en la galería al regenerarla.
   Pegatinas, Con ubicación, Con estrellas, Verticales, Panorámicas, Fecha dudosa, Hora
   aproximada, Parecidas). Los filtros se combinan entre sí.
 - **Parecidas**: aviso en el visor con las miniaturas del grupo para comparar (no se borra nada).
+- **Limpiar repetidas** (botón en la barra, o `http://127.0.0.1:<puerto>/limpiar.html`): ver
+  la sección siguiente.
 - **Lugares** a partir del GPS, sin conexión, si se han descargado las ciudades.
 - **Caras** (con `--caras`): en la ficha de cada foto aparecen sus caras; al nombrar una, el
   nombre se aplica a todo su grupo y se suma a *Personas* (dar el mismo nombre a dos grupos
@@ -232,6 +240,49 @@ El servidor admite peticiones parciales (para saltar en los vídeos y para Safar
 cabeceras `Host` que no sean locales (protección frente a *DNS rebinding*) y, si el puerto
 está ocupado, prueba los siguientes. Abrir el HTML con doble clic no funciona: el navegador
 bloquea la lectura de `galeria.json` desde `file://`.
+
+## Limpiar repetidas
+
+Herramienta para quitar copias sobrantes (sobre todo de WhatsApp), grupo a grupo. Solo
+funciona con `--servir` (necesita el servidor). Lógica en `limpieza.py`, interfaz en
+`limpiar_plantilla.html`.
+
+- **Grupos**: los de *Parecidas* (dHash de `galeria.json`), con un **umbral ajustable** de
+  0 (solo copias casi exactas) a 24 bits; 12 por defecto. Cada grupo muestra las fotos
+  grandes una al lado de otra con resolución, peso (y el del original), fecha, nombre
+  original, carpeta de origen (del catálogo) y marcas: EXIF de cámara, WhatsApp, *Sent*.
+- **Propuesta**: se marca *conservar* la mejor copia y *quitar* las demás. La mejor es la de
+  más píxeles (si difieren más de un 5 %); a igual resolución, la que tiene EXIF de cámara,
+  luego la que no viene de WhatsApp, luego la que no es la enviada (`Sent/`) y por último la
+  que más pesa. Se indica el motivo.
+- **Teclado**: `←` `→` elegir foto, `Espacio` conservar/quitar (también clic), `Enter`
+  confirmar y siguiente, `S` saltar (vuelve al final de la cola), `N` *no son repetidas* (no
+  vuelve a salir), `A` o doble clic ampliar a **tamaño real** (con `←` `→` se cambia de copia
+  manteniendo la misma zona), `Z` deshacer la última decisión. No deja quitar todas las
+  copias de un grupo.
+- **Progreso**: grupo *X de N*, espacio que libera el grupo y lo liberado en la sesión.
+- **Decisiones en el servidor** (`.exportador/limpieza.json`), en cuanto se toman: se puede
+  cerrar y seguir otro día. Un grupo decidido (o marcado *no son repetidas*) no vuelve a
+  salir; si una foto suya se restaura, sí. Los grupos saltados solo se recuerdan mientras
+  la página está abierta.
+- **Borrado seguro**: lo quitado se **mueve** a `.exportador/papelera/<ruta relativa>` (con
+  su copia de `originales/`, si la hay); nunca se borra directamente. `galeria.json` se
+  actualiza al momento (sin esas fotos y con los grupos de parecidas recalculados). Desde
+  *Papelera* se restaura una foto o todas (vuelven a su sitio, o con `_restaurada` si su
+  nombre ya está ocupado) y se **vacía** con confirmación explícita (escribir `VACIAR`).
+  El MD5 de lo quitado queda en la tabla `descartadas` del catálogo: la siguiente
+  importación incremental no lo vuelve a traer (ni el mismo archivo desde otra ruta).
+  Restaurar lo borra de esa tabla.
+- **Límites**: solo actúa sobre fotos de la biblioteca servida. Se rechazan rutas
+  absolutas, con `..` o `\`, en carpetas internas (`.exportador`, `_galeria`,
+  `originales`) o que no sean fotos, y cualquier archivo que sea el *origen* de una
+  importación. La carpeta de origen nunca se toca.
+- **API** (`/api/limpieza/…`): `GET grupos?umbral=N` (incluye el token), `GET papelera`, y
+  `POST decidir | no-repetidas | deshacer | restaurar | vaciar` (JSON). Los `POST` exigen
+  `Origin` con el mismo host y puerto, `Sec-Fetch-Site: same-origin` (si el navegador lo
+  envía) y la cabecera `X-Exportador-Token` con un secreto aleatorio de cada ejecución del
+  servidor, que solo puede leer la propia página: otra web abierta en el navegador no puede
+  provocar estas acciones (CSRF). Como el resto del servidor, solo escucha en 127.0.0.1.
 
 ## Pruebas
 

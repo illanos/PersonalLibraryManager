@@ -200,6 +200,16 @@ class Papelera(Biblioteca):
         self.assertEqual(self.limpieza.grupos()["grupos"], [])
 
 
+class SinCatalogo(CasoConCarpeta):
+    def test_consultar_no_crea_nada(self):
+        escena(self.dir / "2024" / "a.jpg", 5)
+        galeria.generar_galeria(self.dir)
+        limpieza = Limpieza(self.dir)
+        self.assertEqual(limpieza.grupos()["grupos"], [])
+        self.assertEqual(limpieza.contenido_papelera()["fotos"], [])
+        self.assertFalse((self.dir / ".exportador").exists())
+
+
 class Seguridad(Biblioteca):
     def test_rutas_fuera_de_la_biblioteca_se_rechazan(self):
         fuera = self.dir / "fuera.jpg"
