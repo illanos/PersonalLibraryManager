@@ -31,8 +31,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from descargas import CARPETA_DATOS
-from main import (COMANDOS_IMPORTACION, _calidad, _positivo, comprobar_argumentos,
-                  construir_parser, destino_de)
+from main import (COMANDOS_IMPORTACION, _calidad, _positivo, _umbral_fusion,
+                  comprobar_argumentos, construir_parser, destino_de)
 from media_utils import MARCA_PROGRESO, VARIABLE_PROGRESO
 from servidor import SoloLocal, crear_servidor, ligar_local
 
@@ -41,11 +41,15 @@ PROGRAMA = CARPETA_PROGRAMA / "main.py"
 PLANTILLA = CARPETA_PROGRAMA / "panel.html"
 PREFERENCIAS = CARPETA_DATOS / "panel.json"
 
-COMANDOS_PANEL = ("todo", "fotos", "videos", "audio", "galeria", "reorganizar")
+COMANDOS_PANEL = ("todo", "fotos", "videos", "audio", "galeria", "reorganizar", "fusionar")
 # El panel ya abre la galería por su cuenta (un servidor que no termina nunca no
 # cabe en una ejecución con principio y fin)
 NO_EN_PANEL = {"help", "servir", "puerto", "sin_navegador"}
-RANGOS = {_positivo: (0, None), _calidad: (1, 100)}
+RANGOS = {_positivo: (0, None), _calidad: (1, 100), _umbral_fusion: (0, 12)}
+# Qué pedir cuando falta una carpeta obligatoria («Elige …»)
+CARPETAS_OBLIGATORIAS = {"origen": "la carpeta de origen",
+                         "coleccion": "la colección que quieres añadir",
+                         "destino": "la biblioteca a la que añadirla"}
 # En el panel, la galería sale completa por defecto (caras y lugares). Las descargas solo
 # ocurren la primera vez; después ya están en datos/ y se saltan. En la CLI siguen
 # siendo opciones que hay que pedir.
@@ -54,10 +58,10 @@ DEFECTOS_PANEL = {"caras": True, "descargar_lugares": True, "descargar_modelos_c
 TITULOS = {
     "todo": "Importar todo", "fotos": "Importar fotos", "videos": "Importar vídeos",
     "audio": "Importar audio", "galeria": "Generar la galería",
-    "reorganizar": "Reorganizar la biblioteca",
+    "reorganizar": "Reorganizar la biblioteca", "fusionar": "Fusionar otra colección",
 }
 TITULOS_FASE = {"fotos": "Fotos", "videos": "Vídeos", "audio": "Audio",
-                "galeria": "Galería", "reorganizar": "Reorganizar"}
+                "galeria": "Galería", "reorganizar": "Reorganizar", "fusionar": "Fusionar"}
 
 MAX_LINEAS = 20000        # registro en memoria por ejecución
 LINEAS_POR_RESPUESTA = 2000
@@ -113,7 +117,8 @@ def calcular_esquema() -> dict:
             defecto = DEFECTOS_PANEL.get(a.dest, defecto)
             op = {"dest": a.dest, "opcion": a.option_strings[0] if a.option_strings else None,
                   "tipo": tipo, "defecto": defecto, "ayuda": _ayuda(a.help),
-                  "grupo": grupo_de.get(id(a)), "posicional": not a.option_strings}
+                  "grupo": grupo_de.get(id(a)), "posicional": not a.option_strings,
+                  "obligatoria": bool(a.option_strings and a.required)}
             if a.choices:
                 op["opciones"] = list(a.choices)
             if a.type in RANGOS:
@@ -152,10 +157,10 @@ def construir_argv(comando: str, valores: dict, simular: bool = False) -> list:
             valor = valores.get(op["dest"], op["defecto"])
         else:
             valor = valores.get(op["dest"])
+        if (op["posicional"] or op.get("obligatoria")) and not _texto(valor):
+            raise ErrorPanel("Elige " + CARPETAS_OBLIGATORIAS.get(op["dest"],
+                                                                  "la carpeta de la biblioteca"))
         if op["posicional"]:
-            if not _texto(valor):
-                raise ErrorPanel("Elige la carpeta de " + (
-                    "origen" if op["dest"] == "origen" else "la biblioteca"))
             posicionales.append(_texto(valor))
         elif op["tipo"] == "si_no":
             if valor is True:
@@ -192,11 +197,17 @@ def carpeta_resultado(args) -> Path:
         return args.carpeta.resolve()
     if args.comando == "reorganizar":
         return args.biblioteca.resolve()
+    if args.comando == "fusionar":
+        return args.destino.resolve()
     return destino_de(args.origen, args.destino)
 
 
 def fases_previstas(args) -> list:
     """Fases en el orden en que las ejecuta main.py."""
+    if args.comando == "fusionar":   # actualiza la galería de la biblioteca, si la tiene
+        galeria = (not args.simular and not args.sin_galeria
+                   and (args.destino.resolve() / "galeria.json").is_file())
+        return ["fusionar"] + (["galeria"] if galeria else [])
     if args.comando not in COMANDOS_IMPORTACION:
         return [args.comando]
     if args.comando == "todo":
@@ -233,11 +244,12 @@ def _nivel(linea: str) -> str:
         return "error"
     if "AVISO" in palabras or texto.startswith("aviso:"):
         return "aviso"
-    if palabras & {"DUPLICADO", "PARECIDA"}:
+    if palabras & {"DUPLICADO", "PARECIDA"} or texto.startswith(("YA ESTÁ", "REPETIDA", "QUITADA")):
         return "info"
-    if palabras & {"OK", "CAMBIOS", "ANIMADA", "PEGATINA"} and texto.startswith("["):
+    if palabras & {"OK", "CAMBIOS", "ANIMADA", "PEGATINA", "AÑADIR", "SUSTITUIR"} \
+            and texto.startswith("["):
         return "ok"
-    if texto.startswith(("PROCESANDO", "SIMULACIÓN", "REORGANIZANDO", "-----------",
+    if texto.startswith(("PROCESANDO", "SIMULACIÓN", "REORGANIZANDO", "FUSIONANDO", "-----------",
                          "Galería generada", "Origen", "Destino")):
         return "titulo"
     return "normal"
@@ -525,7 +537,7 @@ class Panel:
             self.siguiente += 1
             self.trabajo = trabajo
             args = previa["args"]
-            carpetas = [str(getattr(args, d).resolve()) for d in ("origen", "destino",
+            carpetas = [str(getattr(args, d).resolve()) for d in ("origen", "coleccion", "destino",
                                                                   "carpeta", "biblioteca")
                         if getattr(args, d, None)]
             self._recordar(comando, valores, carpetas + [previa["carpeta"]])
