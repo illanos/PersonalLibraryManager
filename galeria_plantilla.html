@@ -36,6 +36,7 @@
   select { border-radius: 8px; background: var(--panel2); }
   select option { background: var(--panel); }
   .chip:hover { color: var(--texto); }
+  a.chip { text-decoration: none; }
   .chip.activo { border-color: var(--acento); color: var(--texto); background: rgba(139,108,255,.16); }
   .tamano { display: flex; align-items: center; color: var(--tenue); }
   .tamano input { width: 90px; accent-color: var(--acento); }
@@ -173,6 +174,8 @@
   <button id="btn-whatsapp" class="chip" aria-pressed="false"
           title="El contenido de WhatsApp va aparte: no se mezcla con la línea de tiempo">WhatsApp</button>
   <button id="btn-ocultar" class="chip" aria-pressed="false">Ocultar capturas</button>
+  <a id="btn-limpiar" class="chip" href="limpiar.html" hidden
+     title="Revisar las fotos repetidas grupo a grupo y mover a la papelera las copias peores">Limpiar repetidas</a>
   <select id="anio" aria-label="Año"><option value="">Todos los años</option></select>
   <button id="btn-etiquetas" class="chip" aria-expanded="false" aria-controls="filtros">Etiquetas</button>
   <button id="orden" class="chip" title="Cambiar el orden">Recientes primero</button>
@@ -302,6 +305,7 @@ async function cargar() {
   });
   await cargarFavoritos();
   $('btn-whatsapp').hidden = !estado.items.some(it => it.ambito === 'whatsapp');
+  $('btn-limpiar').hidden = !gruposParecidas.size || !location.protocol.startsWith('http');
   document.querySelector('.chip[data-tipo="audio"]').hidden = !estado.items.some(it => it.tipo === 'audio');
   pintarOcultar();
   rellenarAnios();

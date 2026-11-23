@@ -56,6 +56,14 @@ CREATE TABLE IF NOT EXISTS descartes (
     referencia TEXT,                  -- parecida: destino de la copia buena
     fecha      TEXT NOT NULL
 );
+
+-- Fotos quitadas a mano con «Limpiar repetidas» (limpieza.py): su contenido no se
+-- vuelve a importar aunque siga en el origen. Sobrevive a vaciar la papelera.
+CREATE TABLE IF NOT EXISTS descartadas (
+    hash    TEXT PRIMARY KEY,         -- MD5 del origen (o del archivo, si no estaba catalogado)
+    destino TEXT NOT NULL,            -- dónde estaba en la biblioteca
+    fecha   TEXT NOT NULL
+);
 """
 
 # Columnas añadidas después de la versión 1 (se crean al abrir un catálogo antiguo)
@@ -89,8 +97,9 @@ class Catalogo:
             self._db.execute(f"PRAGMA user_version = {VERSION_ESQUEMA}")
         self._db.row_factory = sqlite3.Row
         self.columnas = {f[1] for f in self._db.execute("PRAGMA table_info(archivos)")}
-        self.hay_descartes = bool(self._db.execute(
-            "SELECT 1 FROM sqlite_master WHERE name = 'descartes'").fetchone())
+        tablas = {f[0] for f in self._db.execute("SELECT name FROM sqlite_master")}
+        self.hay_descartes = "descartes" in tablas
+        self.hay_descartadas = "descartadas" in tablas
 
     def _migrar(self):
         """Añade a un catálogo antiguo las columnas nuevas (sin perder nada)."""
@@ -141,6 +150,14 @@ class Catalogo:
             return self._db.execute(
                 "SELECT * FROM descartes WHERE origen = ? AND tamano = ? AND mtime_ns = ?",
                 (str(ruta), st.st_size, st.st_mtime_ns)).fetchone()
+
+    def hash_descartado(self, digest: str) -> bool:
+        """¿Se quitó a mano de la biblioteca una foto con este contenido?"""
+        if not self.hay_descartadas or not digest:
+            return False
+        with self._lock:
+            return self._db.execute(
+                "SELECT 1 FROM descartadas WHERE hash = ?", (digest,)).fetchone() is not None
 
     def filas(self, tipo: str = None) -> list:
         with self._lock:

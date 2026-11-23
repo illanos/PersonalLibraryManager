@@ -7,25 +7,38 @@ Sobre el servidor estático de Python añade lo que una galería necesita:
   - Solo escucha en 127.0.0.1 y rechaza cabeceras Host que no sean locales, lo que
     impide que una web maliciosa lea tus fotos mediante "DNS rebinding".
   - Si el puerto está ocupado prueba los siguientes.
+  - «Limpiar repetidas» (limpiar.html + /api/limpieza/..., ver limpieza.py). Las
+    peticiones que mueven o borran archivos exigen, además, el mismo origen (Origin y
+    Sec-Fetch-Site) y un token secreto de esta ejecución que solo puede leer la propia
+    página: otra web no puede provocarlas (CSRF).
 """
 
 import functools
+import hmac
 import ipaddress
 import json
 import os
 import re
+import secrets
 import sys
 import threading
 import webbrowser
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from media_utils import CARPETA_GALERIA
 
 RUTA_API_FAVORITOS = "/api/favoritos"
 RUTA_API_CARAS = "/api/caras"        # nombres de los grupos de caras: {grupo: nombre}
+RUTA_API_LIMPIEZA = "/api/limpieza/"
+RUTA_LIMPIAR = "/limpiar.html"
+PLANTILLA_LIMPIAR = Path(__file__).with_name("limpiar_plantilla.html")
+CABECERA_TOKEN = "X-Exportador-Token"
+# Secreto de esta ejecución del servidor para las acciones de limpieza (anti-CSRF)
+TOKEN_LIMPIEZA = secrets.token_urlsafe(24)
+ACCIONES_LIMPIEZA = {"decidir", "no-repetidas", "deshacer", "restaurar", "vaciar"}
 MAX_CUERPO = 5 * 1024 * 1024
 TAM_BLOQUE = 256 * 1024
 _RE_RANGO = re.compile(r"bytes=(\d*)-(\d*)")
@@ -92,6 +105,10 @@ class ManejadorGaleria(SimpleHTTPRequestHandler):
         if self._ruta_peticion() == RUTA_API_CARAS:
             from caras import leer_nombres
             return self._responder_json(HTTPStatus.OK, leer_nombres(Path(self.directory)))
+        if self._ruta_peticion() == RUTA_LIMPIAR:
+            return self._servir_texto(PLANTILLA_LIMPIAR.read_bytes(), "text/html; charset=utf-8")
+        if self._ruta_peticion().startswith(RUTA_API_LIMPIEZA):
+            return self._limpieza_get(self._ruta_peticion()[len(RUTA_API_LIMPIEZA):])
         rango = self.headers.get("Range")
         if rango and self._servir_rango(rango):
             return
@@ -149,7 +166,14 @@ class ManejadorGaleria(SimpleHTTPRequestHandler):
     def do_POST(self):
         if not self._host_valido() or not self._origen_valido():
             return self.send_error(HTTPStatus.FORBIDDEN, "Origen no permitido")
-        if self._ruta_peticion() not in (RUTA_API_FAVORITOS, RUTA_API_CARAS):
+        accion = None
+        if self._ruta_peticion().startswith(RUTA_API_LIMPIEZA):
+            accion = self._ruta_peticion()[len(RUTA_API_LIMPIEZA):]
+            if accion not in ACCIONES_LIMPIEZA:
+                return self.send_error(HTTPStatus.NOT_FOUND)
+            if not self._mismo_origen_estricto():
+                return self._error_json(HTTPStatus.FORBIDDEN, "Petición de otro origen o sin token")
+        elif self._ruta_peticion() not in (RUTA_API_FAVORITOS, RUTA_API_CARAS):
             return self.send_error(HTTPStatus.NOT_FOUND)
         # Exigir JSON obliga al navegador a pedir permiso (CORS) a otras webs
         if "application/json" not in self.headers.get("Content-Type", ""):
@@ -164,6 +188,8 @@ class ManejadorGaleria(SimpleHTTPRequestHandler):
             datos = json.loads(self.rfile.read(longitud))
         except ValueError:
             return self.send_error(HTTPStatus.BAD_REQUEST, "JSON no válido")
+        if accion:
+            return self._limpieza_post(accion, datos)
         if self._ruta_peticion() == RUTA_API_CARAS:
             return self._guardar_nombre_cara(datos)
         if not isinstance(datos, list) or not all(isinstance(x, str) for x in datos):
@@ -199,6 +225,69 @@ class ManejadorGaleria(SimpleHTTPRequestHandler):
             tmp.write_text(json.dumps(nombres, ensure_ascii=False, indent=1), encoding="utf-8")
             os.replace(tmp, ruta)
         self._responder_json(HTTPStatus.OK, nombres)
+
+    # --- limpiar repetidas ---
+
+    def _mismo_origen_estricto(self) -> bool:
+        """Origin presente y con el mismo host:puerto, Sec-Fetch-Site same-origin y token."""
+        origen = self.headers.get("Origin")
+        if not origen or urlsplit(origen).netloc.lower() != self.headers.get("Host", "").lower():
+            return False
+        if self.headers.get("Sec-Fetch-Site", "same-origin") != "same-origin":
+            return False
+        return hmac.compare_digest(self.headers.get(CABECERA_TOKEN, ""), TOKEN_LIMPIEZA)
+
+    def _limpieza(self):
+        from limpieza import Limpieza
+        return Limpieza(Path(self.directory))
+
+    def _limpieza_get(self, accion: str):
+        from limpieza import UMBRAL
+        if accion == "grupos":
+            try:
+                umbral = int(parse_qs(urlsplit(self.path).query).get("umbral", [UMBRAL])[0])
+            except ValueError:
+                umbral = UMBRAL
+            datos = self._limpieza().grupos(umbral)
+            datos["token"] = TOKEN_LIMPIEZA   # una web ajena no puede leerlo (sin CORS)
+            return self._responder_json(HTTPStatus.OK, datos)
+        if accion == "papelera":
+            return self._responder_json(HTTPStatus.OK, self._limpieza().contenido_papelera())
+        self.send_error(HTTPStatus.NOT_FOUND)
+
+    def _limpieza_post(self, accion: str, datos):
+        from limpieza import ErrorLimpieza, RutaNoValida
+        if not isinstance(datos, dict):
+            return self._error_json(HTTPStatus.BAD_REQUEST, "Se esperaba un objeto JSON")
+        limpieza = self._limpieza()
+        try:
+            if accion == "decidir":
+                resultado = limpieza.decidir(datos.get("grupo"), datos.get("quitar", []))
+            elif accion == "no-repetidas":
+                resultado = limpieza.no_repetidas(datos.get("grupo"))
+            elif accion == "deshacer":
+                resultado = limpieza.deshacer()
+            elif accion == "restaurar":
+                resultado = limpieza.restaurar(datos.get("srcs"))
+            else:
+                resultado = limpieza.vaciar(datos.get("confirmar"))
+        except RutaNoValida as exc:
+            return self._error_json(HTTPStatus.BAD_REQUEST, f"Ruta no permitida: {exc}")
+        except ErrorLimpieza as exc:
+            return self._error_json(HTTPStatus.CONFLICT, str(exc))
+        except OSError as exc:
+            return self._error_json(HTTPStatus.INTERNAL_SERVER_ERROR, f"Error de disco: {exc}")
+        self._responder_json(HTTPStatus.OK, resultado)
+
+    def _error_json(self, estado, texto: str):
+        self._responder_json(estado, {"ok": False, "error": texto})
+
+    def _servir_texto(self, cuerpo: bytes, tipo: str):
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", tipo)
+        self.send_header("Content-Length", str(len(cuerpo)))
+        self.end_headers()
+        self.wfile.write(cuerpo)
 
     def _responder_json(self, estado, datos):
         cuerpo = json.dumps(datos, ensure_ascii=False).encode("utf-8")

@@ -118,7 +118,7 @@ def guardar_optimizada(ruta: Path, destino: Path, opciones: OpcionesFotos = None
 @dataclass
 class _Tarea:
     ruta: Path
-    estado: str = "pendiente"      # pendiente | ya_importado | parecida_conocida | danado | error
+    estado: str = "pendiente"      # pendiente | ya_importado | parecida_conocida | descartada | danado | error
     problema: str = ""           # dañado: vacío | sin cabecera válida | truncado | ilegible
     conocido: bool = False        # dañado ya anotado en una ejecución anterior
     detalle: str = ""
@@ -164,6 +164,9 @@ def _analizar(ruta: Path, catalogo: Catalogo, origen: Path) -> _Tarea:
             t.estado, (t.problema, t.detalle) = "danado", diagnostico
             return t
         t.hash = hash_archivo(ruta)
+        if catalogo.hash_descartado(t.hash):      # quitada con «Limpiar repetidas»
+            t.estado, t.detalle = "descartada", "quitada con «Limpiar repetidas»"
+            return t
         fila = catalogo.buscar_por_hash(t.hash)   # mismo contenido, otra ruta
         if fila is not None:
             t.estado, t.detalle = "ya_importado", fila["destino"]
@@ -311,6 +314,9 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
                     continue
                 if t.estado == "parecida_conocida":
                     stats["parecidas_omitidas"] += 1
+                    continue
+                if t.estado == "descartada":
+                    stats["descartadas"] = stats.get("descartadas", 0) + 1
                     continue
                 if t.estado == "danado":
                     _anotar_danado(t, rel, danados, catalogo, informe, stats)
