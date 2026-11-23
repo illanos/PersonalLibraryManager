@@ -164,7 +164,7 @@ class Procesamiento(CasoConCarpeta):
         grande = Image.new("RGB", (4000, 3000), (120, 60, 30))
         exif = Image.Exif()
         exif.get_ifd(0x8769)[36867] = "2020:01:01 00:00:26"
-        grande.save(self.origen / "DSC03510.JPG", "MPO", save_all=True, exif=exif,
+        grande.save(self.origen / "DSC03510.JPG", "MPO", save_all=True, exif=exif.tobytes(),
                     append_images=[grande.resize((1600, 1200))])
         with Image.open(self.origen / "DSC03510.JPG") as im:
             self.assertEqual((im.format, im.is_animated), ("MPO", True))
