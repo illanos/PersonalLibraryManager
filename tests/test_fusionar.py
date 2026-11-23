@@ -158,6 +158,49 @@ class Plan(unittest.TestCase):
         self.assertEqual(d.accion, "quitada")
 
 
+class ConArchivos(CasoConCarpeta):
+    """Casos que se confirman abriendo las fotos (vistos en bibliotecas reales)."""
+
+    def elemento(self, ruta, lado, **extra):
+        from similares import dhash
+        with Image.open(ruta) as im:
+            ancho, alto = im.size
+        e = Elemento(lado, "foto", ruta, ruta.name, fecha=datetime(2008, 9, 15, 9, 34, 49),
+                     fuente="exif", ancho=ancho, alto=alto, bytes=ruta.stat().st_size,
+                     dhash=dhash(ruta))
+        for k, v in extra.items():
+            setattr(e, k, v)
+        return e
+
+    def test_mismo_original_girado_y_con_el_1_de_takeout(self):
+        self.assertEqual(fusionar.normalizar_nombre("DSCN0169(1)"), "dscn0169")
+        grande = escena(self.dir / "bib" / "a.jpg", 1, tam=(1600, 1200))
+        (self.dir / "col").mkdir()
+        with Image.open(grande) as im:
+            im.resize((800, 600)).rotate(90, expand=True).save(self.dir / "col" / "a.jpg")
+        bib = [self.elemento(grande, "b", nombre_original="dscn0169")]
+        c = self.elemento(self.dir / "col" / "a.jpg", "c",
+                          nombre_original=fusionar.normalizar_nombre("DSCN0169(1)"))
+        planificar([c], bib)
+        self.assertEqual(c.accion, "ya_esta")
+        self.assertIn("girada", c.como)
+        # Girada pero otra hora: no es la misma
+        c2 = self.elemento(self.dir / "col" / "a.jpg", "c", nombre_original="dscn0169",
+                           fecha=datetime(2008, 9, 15, 9, 34, 50))
+        planificar([c2], bib)
+        self.assertEqual(c2.accion, "anadir")
+
+    def test_hashes_guardados_dudosos_se_confirman_con_los_archivos(self):
+        foto_bib = escena(self.dir / "bib" / "b.jpg", 2)
+        foto_col = copia(foto_bib, self.dir / "col" / "b.jpg", (900, 675))
+        e = self.elemento(foto_bib, "b")
+        c = self.elemento(foto_col, "c", fuente="google")
+        c.dhash = f"{int(e.dhash, 16) ^ 0xFF:032x}"   # guardado de otro origen: 8 bits
+        planificar([c], [e])
+        self.assertEqual(c.accion, "ya_esta")
+        self.assertIn("bit", c.como)
+
+
 class Fotos(CasoConCarpeta):
     """Biblioteca importada de un móvil y otra colección (p. ej. Google Fotos) con:
     una copia peor, una mejor, una nueva, la misma escena otro día, otra toma de una

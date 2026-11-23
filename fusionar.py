@@ -74,6 +74,8 @@ MOTIVO_DESCARTE = "fusion"          # en la tabla `descartes`: comparada y no a�
 _RE_SENT = re.compile(r"(^|[\\/])sent([\\/]|$)", re.IGNORECASE)
 _RE_NOMBRE_BIBLIOTECA = re.compile(r"^\d{8}_")          # 20240512_102030, 20240512_WA0011
 _RE_SUFIJO_RAFAGA = re.compile(r"^(\d{8}_\d{6})_\d{2}$")  # 20240512_102030_01 -> base sin _01
+_RE_COPIA_TAKEOUT = re.compile(r"\(\d+\)$")             # IMG_1234(1): repetida en Takeout
+MISMO_NOMBRE = "mismo original (nombre y hora)"
 
 
 @dataclass
@@ -108,6 +110,7 @@ class Elemento:
     animado: bool = False
     st: os.stat_result = None
     marcos: dict = field(default_factory=dict)   # vídeos: instante -> dHash del fotograma
+    hashes: dict = field(default_factory=dict)   # fotos: giro -> dHash del propio archivo
     md5: str = None
     # Solo colección: qué se va a hacer con ella
     categoria: str = ""
@@ -294,16 +297,52 @@ def _otra_toma(a: Elemento, b: Elemento) -> bool:
             and abs((a.fecha - b.fecha).total_seconds()) > SEGUNDOS_EXIF)
 
 
-def _mismo_nombre_y_hora(a: Elemento, b: Elemento) -> bool:
+def normalizar_nombre(stem: str) -> str:
+    """Nombre del original para compararlo: en minúsculas y sin el «(1)» que añade Takeout
+    a los archivos con el mismo nombre (DSCN0169(1).JPG es DSCN0169.JPG)."""
+    return _RE_COPIA_TAKEOUT.sub("", stem.strip().lower()).strip()
+
+
+def hash_de_archivo(e: Elemento, giro: int = 0):
+    """dHash calculado del propio archivo (girado `giro` grados), con caché.
+
+    Los guardados salen del original (catálogo) o de la miniatura (galería), y entre dos
+    bibliotecas casan algo peor; este es el mismo cálculo en las dos. Solo se usa para
+    confirmar casos dudosos (tarda: hay que abrir la foto)."""
+    if giro not in e.hashes:
+        try:
+            with Image.open(e.ruta) as im:
+                im.draft("RGB", (128, 128))
+                orientacion = im.getexif().get(274)
+                imagen = im.copy() if orientacion in (None, 1) else ImageOps.exif_transpose(im)
+            e.hashes[giro] = dhash_imagen(imagen.rotate(giro, expand=True) if giro else imagen)
+        except Exception:
+            e.hashes[giro] = None
+    return e.hashes[giro]
+
+
+def _mismo_nombre_y_hora(a: Elemento, b: Elemento) -> str:
     """Mismo archivo original (por nombre) y misma hora de captura: la misma foto o vídeo
     aunque cada colección lo haya reducido o recomprimido a su manera (su dHash puede
-    diferir hasta ~10 bits). Como comprobación, que se parezcan (≤ 12 bits) o, en vídeos,
-    que duren lo mismo."""
+    diferir hasta ~10 bits), o girado 90° en una de las dos. Como comprobación, que se
+    parezcan (≤ 12 bits, girando si hace falta) o, en vídeos, que duren lo mismo.
+    Devuelve cómo se sabe, o "" si no lo son."""
     if not a.nombre_original or a.nombre_original != b.nombre_original or a.fecha != b.fecha:
-        return False
+        return ""
     if a.tipo == "video":
-        return _duraciones_compatibles(a.duracion, b.duracion)
-    return bool(a.dhash and b.dhash and distancia(a.dhash, b.dhash) <= UMBRAL)
+        return MISMO_NOMBRE if _duraciones_compatibles(a.duracion, b.duracion) else ""
+    if _proporciones_compatibles(a.proporcion, b.proporcion):
+        if a.dhash and b.dhash and distancia(a.dhash, b.dhash) <= UMBRAL:
+            return MISMO_NOMBRE
+        ha, hb = hash_de_archivo(a), hash_de_archivo(b)
+        return MISMO_NOMBRE if ha and hb and distancia(ha, hb) <= UMBRAL else ""
+    if a.proporcion and b.proporcion and _proporciones_compatibles(a.proporcion, 1 / b.proporcion):
+        ha = hash_de_archivo(a)
+        for giro in (90, 270):
+            hb = hash_de_archivo(b, giro)
+            if ha and hb and distancia(ha, hb) <= UMBRAL:
+                return f"{MISMO_NOMBRE}, girada 90° en una de las dos"
+    return ""
 
 
 def buscar_pareja(c: Elemento, indice: Indice, umbral: int = UMBRAL_COPIA) -> tuple:
@@ -314,10 +353,11 @@ def buscar_pareja(c: Elemento, indice: Indice, umbral: int = UMBRAL_COPIA) -> tu
         return mismo, "mismo original"
     mejor, mejor_bits = None, None
     for e in indice.candidatos(c):
+        como = _mismo_nombre_y_hora(c, e)
+        if como:
+            return e, como
         if not _proporciones_compatibles(c.proporcion, e.proporcion):
             continue
-        if _mismo_nombre_y_hora(c, e):
-            return e, "mismo original (nombre y hora)"
         if c.tipo == "video" and not _duraciones_compatibles(c.duracion, e.duracion):
             continue
         if _identicos(c, e):
@@ -330,6 +370,11 @@ def buscar_pareja(c: Elemento, indice: Indice, umbral: int = UMBRAL_COPIA) -> tu
             if not (c.dhash and e.dhash and con_detalle(c.dhash) and con_detalle(e.dhash)):
                 continue
             bits = distancia(c.dhash, e.dhash)
+            if umbral < bits <= UMBRAL and not _otra_toma(c, e):
+                # Cerca del umbral con hashes de distinto origen: lo dicen los archivos
+                ha, hb = hash_de_archivo(c), hash_de_archivo(e)
+                if ha and hb:
+                    bits = distancia(ha, hb)
             if bits > umbral or _otra_toma(c, e):
                 if bits <= UMBRAL and (c.parecida is None or bits < c.parecida[1]):
                     c.parecida = (e, bits)
@@ -443,7 +488,7 @@ def leer_elemento(ruta: Path, carpeta: Path, lado: str, fila=None, previo: dict 
     fila = dict(fila) if fila else {}
     origen = fila.get("origen") or ""
     e.hash_original = fila.get("hash")
-    e.nombre_original = (Path(origen).stem if origen else ruta.stem).lower()
+    e.nombre_original = normalizar_nombre(Path(origen).stem if origen else ruta.stem)
     e.fecha, e.fuente = _fecha_iso(fila.get("fecha")), fila.get("fuente_fecha") or ""
     if not e.fecha:
         e.fuente = ""
@@ -538,7 +583,7 @@ def _leer_papelera(biblioteca: Path) -> tuple:
             ancho=int(datos.get("ancho") or 0), alto=int(datos.get("alto") or 0),
             bytes=int(datos.get("bytes") or 0), dhash=datos.get("dhash"),
             duracion=float(datos.get("duracion") or 0), hash_original=digest,
-            nombre_original=Path(datos.get("nombre_original") or src).stem.lower()))
+            nombre_original=normalizar_nombre(Path(datos.get("nombre_original") or src).stem)))
     return elementos, descartadas
 
 
