@@ -46,12 +46,27 @@ class Esquema(unittest.TestCase):
     def test_argv_sin_valores_por_defecto(self):
         argv = panel.construir_argv("todo", {
             "origen": r"C:\Mis fotos", "calidad": "88", "formato": "webp", "caras": True,
+            "descargar_lugares": False, "descargar_modelos_caras": False,
             "crf": "", "sin_audio": False, "regenerar": True}, simular=True)
         # regenerar no es de "todo": se ignora
         self.assertEqual(argv, ["todo", r"C:\Mis fotos", "--simular", "--formato", "webp",
                                 "--caras"])
         args = construir_parser().parse_args(argv)
         self.assertEqual((args.formato, args.calidad, args.simular), ("webp", 88, True))
+
+    def test_galeria_completa_por_defecto_solo_en_el_panel(self):
+        opciones = {o["dest"]: o for o in panel.ESQUEMA["galeria"]["opciones"]}
+        for dest in ("caras", "descargar_lugares", "descargar_modelos_caras"):
+            self.assertIs(opciones[dest]["defecto"], True)
+        self.assertIs(opciones["regenerar"]["defecto"], False)
+        self.assertEqual(panel.construir_argv("galeria", {"carpeta": "bib"}),
+                         ["galeria", "bib", "--caras", "--descargar-lugares",
+                          "--descargar-modelos-caras"])
+        self.assertEqual(panel.construir_argv("galeria", {"carpeta": "bib", "caras": False}),
+                         ["galeria", "bib", "--descargar-lugares", "--descargar-modelos-caras"])
+        # La línea de comandos no cambia: hay que pedirlas
+        args = construir_parser().parse_args(["todo", "x"])
+        self.assertFalse(args.caras or args.descargar_lugares or args.descargar_modelos_caras)
 
     def test_posicional_obligatorio(self):
         with self.assertRaisesRegex(panel.ErrorPanel, "origen"):
@@ -196,9 +211,15 @@ class Ejecucion(CasoConCarpeta):
         self.assertNotIn(MARCA_PROGRESO, trabajo.registro_texto())
         self.assertEqual(len(list((self.dir / "bib").rglob("*.jpg"))), 2)
 
-        # Preferencias e historial guardados
-        self.assertTrue(esperar(lambda: self.panel.preferencias["historial"]))
-        prefs = json.loads((self.dir / "prefs" / "panel.json").read_text(encoding="utf-8"))
+        # Preferencias e historial guardados (el archivo se escribe justo al terminar)
+        def guardadas():
+            try:
+                datos = json.loads((self.dir / "prefs" / "panel.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):   # aún escribiéndose (os.replace en Windows)
+                return None
+            return datos if datos.get("historial") else None
+        self.assertTrue(esperar(guardadas, 20))
+        prefs = guardadas()
         self.assertEqual(prefs["comando"], "fotos")
         self.assertEqual(prefs["valores"]["origen"], str(self.dir / "movil"))
         self.assertIn(str((self.dir / "bib").resolve()), prefs["recientes"])

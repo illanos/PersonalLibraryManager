@@ -46,6 +46,10 @@ COMANDOS_PANEL = ("todo", "fotos", "videos", "audio", "galeria", "reorganizar")
 # cabe en una ejecución con principio y fin)
 NO_EN_PANEL = {"help", "servir", "puerto", "sin_navegador"}
 RANGOS = {_positivo: (0, None), _calidad: (1, 100)}
+# En el panel, la galería sale completa por defecto (caras y lugares). Las descargas solo
+# ocurren la primera vez; después ya están en datos/ y se saltan. En la CLI siguen
+# siendo opciones que hay que pedir.
+DEFECTOS_PANEL = {"caras": True, "descargar_lugares": True, "descargar_modelos_caras": True}
 
 TITULOS = {
     "todo": "Importar todo", "fotos": "Importar fotos", "videos": "Importar vídeos",
@@ -106,6 +110,7 @@ def calcular_esquema() -> dict:
                 continue
             tipo = _tipo(a)
             defecto = a.default if isinstance(a.default, (bool, int, float, str)) else None
+            defecto = DEFECTOS_PANEL.get(a.dest, defecto)
             op = {"dest": a.dest, "opcion": a.option_strings[0] if a.option_strings else None,
                   "tipo": tipo, "defecto": defecto, "ayuda": _ayuda(a.help),
                   "grupo": grupo_de.get(id(a)), "posicional": not a.option_strings}
@@ -141,7 +146,12 @@ def construir_argv(comando: str, valores: dict, simular: bool = False) -> list:
         raise ErrorPanel("Valores no válidos")
     posicionales, opciones = [], []
     for op in ESQUEMA[comando]["opciones"]:
-        valor = simular if op["dest"] == "simular" else valores.get(op["dest"])
+        if op["dest"] == "simular":
+            valor = simular
+        elif op["tipo"] == "si_no":   # sin valor: el del panel (DEFECTOS_PANEL)
+            valor = valores.get(op["dest"], op["defecto"])
+        else:
+            valor = valores.get(op["dest"])
         if op["posicional"]:
             if not _texto(valor):
                 raise ErrorPanel("Elige la carpeta de " + (

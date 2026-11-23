@@ -246,6 +246,15 @@ def opciones_videos(args):
                           hilos=args.hilos_video or 1, hw=args.hw)
 
 
+def _descarga_opcional(funcion, que: str):
+    """Los datos descargables son opcionales: sin conexión, la galería se genera igual."""
+    try:
+        funcion()
+    except OSError as exc:   # también urllib.error.URLError
+        print(f"AVISO: no se han podido descargar {que} ({exc}); la galería se genera "
+              "igualmente. Se reintentará en la próxima ejecución.")
+
+
 def galeria(carpeta: Path, args, regenerar: bool = False):
     if not hay_pillow():
         sys.exit(MENSAJE_PILLOW)
@@ -254,10 +263,10 @@ def galeria(carpeta: Path, args, regenerar: bool = False):
         progreso("avance", "galeria", paso="Descargando datos")
     if args.descargar_lugares:
         from lugares import descargar_lugares
-        descargar_lugares()
+        _descarga_opcional(descargar_lugares, "las ciudades")
     if args.descargar_modelos_caras:
         from caras import descargar_modelos
-        descargar_modelos()
+        _descarga_opcional(descargar_modelos, "los modelos de caras")
     from galeria import generar_galeria
     generada = generar_galeria(carpeta, regenerar, caras=args.caras)
     progreso("fin", "galeria")

@@ -250,7 +250,7 @@
           <div class="ayuda" id="info-destino">Donde se guarda todo, ordenado por fecha. Si ya existe, solo se añade lo nuevo.</div>
         </div>
         <div class="campo" data-para="biblioteca">
-          <label for="c-biblioteca">Biblioteca</label>
+          <label for="c-biblioteca" id="l-biblioteca">Biblioteca</label>
           <div class="ruta">
             <input type="text" id="c-biblioteca" data-dest="biblioteca" list="recientes" placeholder="D:\Biblioteca" spellcheck="false" autocomplete="off">
             <button type="button" class="boton" data-examinar="biblioteca" data-titulo="Biblioteca ya organizada">Examinar…</button>
@@ -591,8 +591,9 @@ function elegirComando(c) {
     }
     det.hidden = !visibles;
   }
+  $("#l-biblioteca").textContent = c === "galeria" ? "Biblioteca (la galería se crea dentro)" : "Biblioteca a reorganizar";
   $("#info-biblioteca").textContent = c === "galeria"
-    ? "Una carpeta ya organizada: se crea o actualiza su galería (solo lo nuevo, salvo «Regenerar»)."
+    ? "La carpeta donde importaste (el destino de «Importar»): se crea o actualiza su galería, solo lo nuevo salvo «Regenerar»."
     : "Una carpeta ya organizada. Solo se mueve o renombra dentro de ella.";
   $("#b-simular").hidden = !(ESQUEMA[c] && ESQUEMA[c].simular);
   $("#t-ejecutar").textContent = BOTON[c] || "Ejecutar";
@@ -925,7 +926,7 @@ function pintarHistorial(historial) {
 async function iniciar() {
   ESQUEMA = await api("/api/esquema");
   for (const c in ESQUEMA) for (const o of opcionesDe(c)) {
-    if (!(o.dest in defectos) && o.defecto !== null && o.dest !== "simular") defectos[o.dest] = o.tipo === "si_no" ? false : o.defecto;
+    if (!(o.dest in defectos) && o.defecto !== null && o.dest !== "simular") defectos[o.dest] = o.tipo === "si_no" ? o.defecto === true : o.defecto;
   }
   pintarSecciones();
   const prefs = (await cargarHistorial()) || {};
