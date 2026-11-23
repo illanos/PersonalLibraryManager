@@ -54,7 +54,22 @@ def _es_local(nombre_host: str) -> bool:
         return False
 
 
-class ManejadorGaleria(SimpleHTTPRequestHandler):
+class SoloLocal:
+    """Comprobaciones comunes a los servidores locales (galería y panel)."""
+
+    def _host_valido(self) -> bool:
+        host = self.headers.get("Host", "")
+        return _es_local(re.sub(r":\d+$", "", host))
+
+    def _origen_valido(self) -> bool:
+        origen = self.headers.get("Origin")
+        return origen is None or _es_local(urlsplit(origen).hostname)
+
+    def _ruta_peticion(self) -> str:
+        return urlsplit(getattr(self, "path", "")).path
+
+
+class ManejadorGaleria(SoloLocal, SimpleHTTPRequestHandler):
     _lock_favoritos = threading.Lock()
     # El registro de Windows a veces trae tipos MIME raros; .mov (H.264 de iPhone)
     # se anuncia como MP4 para que Chrome y Firefox también lo reproduzcan.
@@ -70,19 +85,6 @@ class ManejadorGaleria(SimpleHTTPRequestHandler):
 
     def log_message(self, formato, *args):   # sin una línea por cada miniatura
         pass
-
-    # --- seguridad ---
-
-    def _host_valido(self) -> bool:
-        host = self.headers.get("Host", "")
-        return _es_local(re.sub(r":\d+$", "", host))
-
-    def _origen_valido(self) -> bool:
-        origen = self.headers.get("Origin")
-        return origen is None or _es_local(urlsplit(origen).hostname)
-
-    def _ruta_peticion(self) -> str:
-        return urlsplit(getattr(self, "path", "")).path
 
     def end_headers(self):
         self.send_header("Accept-Ranges", "bytes")
@@ -298,7 +300,7 @@ class ManejadorGaleria(SimpleHTTPRequestHandler):
         self.wfile.write(cuerpo)
 
 
-class ServidorGaleria(ThreadingHTTPServer):
+class ServidorLocal(ThreadingHTTPServer):
     # En Windows SO_REUSEADDR permite "robar" un puerto ocupado: mejor desactivarlo
     allow_reuse_address = sys.platform != "win32"
     daemon_threads = True
@@ -310,17 +312,25 @@ class ServidorGaleria(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
-def crear_servidor(carpeta: Path, puerto: int = 8080, intentos: int = 10):
+ServidorGaleria = ServidorLocal   # nombre anterior
+
+
+def ligar_local(manejador, puerto: int, intentos: int = 10) -> ServidorLocal:
     """Servidor ligado a 127.0.0.1 en el primer puerto libre desde `puerto`."""
-    manejador = functools.partial(ManejadorGaleria, directory=str(carpeta))
     ultimo_error = None
-    for candidato in range(puerto, puerto + intentos):
+    for candidato in range(puerto, puerto + max(1, intentos)):
         try:
-            return ServidorGaleria(("127.0.0.1", candidato), manejador)
+            return ServidorLocal(("127.0.0.1", candidato), manejador)
         except OSError as exc:
             ultimo_error = exc
     raise OSError(f"No hay puertos libres entre {puerto} y {puerto + intentos - 1}: "
                   f"{ultimo_error}")
+
+
+def crear_servidor(carpeta: Path, puerto: int = 8080, intentos: int = 10):
+    """Servidor de la galería de `carpeta` en el primer puerto libre desde `puerto`."""
+    return ligar_local(functools.partial(ManejadorGaleria, directory=str(carpeta)),
+                       puerto, intentos)
 
 
 def servir(carpeta: Path, puerto: int = 8080, abrir_navegador: bool = True):

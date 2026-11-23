@@ -18,7 +18,7 @@ from clasificacion import carpeta_destino, categoria
 from danados import RegistroDanados, diagnosticar
 from media_utils import (
     copiar_atomico, fecha_desde_nombre, fecha_mtime, fecha_y_nombre, hash_archivo, imprimir,
-    imprimir_resumen, listar_archivos, nombre_libre, nuevas_estadisticas,
+    imprimir_resumen, listar_archivos, nombre_libre, nuevas_estadisticas, progreso,
 )
 
 EXTENSIONES_AUDIO = {".opus", ".mp3", ".m4a", ".aac", ".ogg", ".wav"}
@@ -59,6 +59,8 @@ def procesar_audio(origen: Path, destino: Path, simular: bool) -> dict:
         for n, ruta in enumerate(archivos, 1):
             rel = ruta.relative_to(origen)
             prefijo = f"  [{n}/{len(archivos)}]"
+            progreso("avance", "audio", paso="Copiando", hecho=n, total=len(archivos),
+                     archivo=rel.as_posix())
             try:
                 st = ruta.stat()
                 if catalogo.buscar_por_origen(ruta, st) is not None:

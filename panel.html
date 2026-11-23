@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exportador</title>
+<style>
+  :root {
+    --bg: #0e0e10; --panel: #17171a; --panel2: #222226; --borde: #2f2f35;
+    --texto: #ececef; --tenue: #9b9ba5; --acento: #8b6cff; --acento-suave: rgba(139,108,255,.16);
+    --ok: #3ecf8e; --aviso: #f5b947; --error: #ff6b6b; --info: #6cb6ff;
+    --radio: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--texto); font: 14px/1.45 'Segoe UI', system-ui, sans-serif; }
+  button, select, input { font: inherit; color: inherit; }
+  [hidden] { display: none !important; }
+  svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8;
+        stroke-linecap: round; stroke-linejoin: round; vertical-align: -3px; flex: none; }
+  :focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+  code, pre, .mono { font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace; }
+
+  /* ---------- Cabecera ---------- */
+  header { position: sticky; top: 0; z-index: 10; background: rgba(23,23,26,.94); backdrop-filter: blur(8px);
+           border-bottom: 1px solid var(--borde); padding: 12px 20px; display: flex; align-items: center; gap: 12px; }
+  header h1 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+  header h1 span { color: var(--tenue); font-weight: 400; margin-left: 6px; }
+  .logo { width: 30px; height: 30px; border-radius: 8px; background: var(--acento-suave); color: var(--acento);
+          display: grid; place-items: center; }
+  .logo svg { width: 18px; height: 18px; }
+  #estado-global { margin-left: auto; }
+  .pastilla { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+              border: 1px solid var(--borde); color: var(--tenue); font-size: .82rem; white-space: nowrap; }
+  .pastilla::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .pastilla.en_marcha, .pastilla.deteniendo { color: var(--acento); border-color: rgba(139,108,255,.5); }
+  .pastilla.en_marcha::before { animation: latido 1.2s ease-in-out infinite; }
+  .pastilla.terminado { color: var(--ok); border-color: rgba(62,207,142,.4); }
+  .pastilla.detenido { color: var(--aviso); border-color: rgba(245,185,71,.4); }
+  .pastilla.error { color: var(--error); border-color: rgba(255,107,107,.4); }
+  @keyframes latido { 50% { opacity: .3; } }
+
+  /* ---------- Rejilla ---------- */
+  main { display: grid; grid-template-columns: minmax(0, 560px) minmax(0, 1fr); gap: 20px;
+         padding: 20px; max-width: 1500px; margin: 0 auto; align-items: start; }
+  @media (max-width: 1050px) { main { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 640px) { main { padding: 12px; gap: 12px; } header { padding: 10px 12px; } }
+  .columna { display: grid; gap: 20px; min-width: 0; }
+  .tarjeta { background: var(--panel); border: 1px solid var(--borde); border-radius: var(--radio); padding: 18px; min-width: 0; }
+  .tarjeta > h2, .vacio h2 { margin: 0 0 12px; font-size: .78rem; text-transform: uppercase; letter-spacing: .07em;
+                           color: var(--tenue); font-weight: 600; }
+  .tenue { color: var(--tenue); }
+
+  /* ---------- Acciones ---------- */
+  .acciones { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  @media (max-width: 520px) { .acciones { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .accion { text-align: left; background: var(--panel2); border: 1px solid var(--borde); border-radius: 10px;
+            padding: 10px 12px; cursor: pointer; display: grid; gap: 2px; align-content: start; }
+  .accion:hover { border-color: var(--tenue); }
+  .accion strong { display: flex; align-items: center; gap: 7px; font-weight: 600; }
+  .accion span { color: var(--tenue); font-size: .8rem; line-height: 1.3; }
+  .accion[aria-checked="true"] { border-color: var(--acento); background: var(--acento-suave); }
+  .accion[aria-checked="true"] svg { color: var(--acento); }
+
+  /* ---------- Campos ---------- */
+  .bloque { margin-top: 18px; display: grid; gap: 14px; }
+  .campo { display: grid; gap: 5px; min-width: 0; }
+  .campo > label, .campo .etiqueta { font-weight: 600; font-size: .9rem; }
+  .ayuda { color: var(--tenue); font-size: .8rem; line-height: 1.35; }
+  .ayuda.ok { color: var(--ok); }
+  .ayuda.aviso { color: var(--aviso); }
+  .ruta { display: flex; gap: 6px; }
+  input[type=text], input[type=number], select {
+    background: var(--panel2); border: 1px solid var(--borde); border-radius: 8px; padding: 8px 10px; min-width: 0; width: 100%; }
+  input[type=text]:focus, input[type=number]:focus, select:focus { border-color: var(--acento); outline: none; }
+  input::placeholder { color: #6d6d78; }
+  select option { background: var(--panel); }
+  .ruta input { flex: 1; font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace; font-size: .86rem; }
+  .boton { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-radius: 8px;
+           padding: 8px 14px; border: 1px solid var(--borde); background: var(--panel2); cursor: pointer; white-space: nowrap; }
+  .boton:hover:not(:disabled) { border-color: var(--tenue); }
+  .boton:disabled { opacity: .45; cursor: not-allowed; }
+  .boton.primario { background: var(--acento); border-color: var(--acento); color: #fff; font-weight: 600; }
+  .boton.primario:hover:not(:disabled) { filter: brightness(1.1); }
+  .boton.peligro { color: var(--error); border-color: rgba(255,107,107,.45); background: transparent; }
+  .boton.peque { padding: 5px 10px; font-size: .82rem; }
+  .enlace { background: none; border: 0; color: var(--tenue); cursor: pointer; text-decoration: underline; padding: 0; font-size: .82rem; }
+  .enlace:hover { color: var(--texto); }
+
+  details.seccion { border: 1px solid var(--borde); border-radius: 10px; background: rgba(255,255,255,.015); }
+  details.seccion > summary { list-style: none; cursor: pointer; padding: 11px 14px; display: flex; align-items: center; gap: 10px; }
+  details.seccion > summary::-webkit-details-marker { display: none; }
+  details.seccion > summary::before { content: ""; width: 7px; height: 7px; border-right: 2px solid var(--tenue);
+    border-bottom: 2px solid var(--tenue); transform: rotate(-45deg); transition: transform .15s; margin: 0 2px; }
+  details.seccion[open] > summary::before { transform: rotate(45deg); }
+  details.seccion > summary strong { font-weight: 600; }
+  details.seccion > summary .resumen { color: var(--tenue); font-size: .8rem; margin-left: auto; text-align: right;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .contenido { padding: 4px 14px 14px; display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .contenido .ancho { grid-column: 1 / -1; }
+  @media (max-width: 520px) { .contenido { grid-template-columns: minmax(0, 1fr); } }
+
+  .interruptor { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: start; cursor: pointer; }
+  .interruptor input { appearance: none; width: 34px; height: 20px; border-radius: 999px; background: var(--borde);
+    position: relative; cursor: pointer; margin: 1px 0 0; transition: background .15s; grid-row: span 2; }
+  .interruptor input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px;
+    border-radius: 50%; background: #fff; transition: transform .15s; }
+  .interruptor input:checked { background: var(--acento); }
+  .interruptor input:checked::after { transform: translateX(14px); }
+  .interruptor .etiqueta { font-weight: 600; font-size: .9rem; }
+  .rango { display: flex; align-items: center; gap: 10px; }
+  .rango input { flex: 1; accent-color: var(--acento); }
+  .rango output { min-width: 2.5em; text-align: right; font-variant-numeric: tabular-nums; }
+
+  .comando { margin-top: 18px; background: #0a0a0c; border: 1px solid var(--borde); border-radius: 8px; padding: 8px 8px 8px 12px;
+             display: flex; gap: 8px; align-items: flex-start; }
+  .comando code { flex: 1; font-size: .8rem; color: #c9c9d3; word-break: break-all; white-space: pre-wrap; padding-top: 4px; min-height: 1.4em; }
+  .mensaje-form { margin: 12px 0 0; font-size: .88rem; display: flex; gap: 8px; align-items: flex-start; }
+  .mensaje-form.error { color: var(--error); }
+  .mensaje-form.pista { color: var(--tenue); }
+  .botones { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .botones .boton { padding: 10px 18px; }
+  .botones .enlace { margin-left: auto; }
+
+  /* ---------- Progreso ---------- */
+  .cab { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+  .cab h3 { margin: 0; font-size: 1.15rem; font-weight: 600; margin-right: auto; min-width: 0; }
+  .cab .tiempo { color: var(--tenue); font-variant-numeric: tabular-nums; }
+  .linea-trabajo { color: var(--tenue); font-size: .78rem; word-break: break-all; margin: -6px 0 14px; }
+  .fases { list-style: none; margin: 0 0 16px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+  .fases li { display: flex; align-items: center; gap: 7px; padding: 5px 12px 5px 8px; border-radius: 999px;
+              border: 1px solid var(--borde); color: var(--tenue); font-size: .85rem; }
+  .fases li::before { content: ""; width: 16px; height: 16px; border-radius: 50%; border: 2px solid currentColor; flex: none; }
+  .fases li.en_curso { color: var(--texto); border-color: var(--acento); background: var(--acento-suave); }
+  .fases li.en_curso::before { border-color: var(--acento); border-top-color: transparent; animation: girar .9s linear infinite; }
+  .fases li.hecha { color: var(--texto); }
+  .fases li.hecha::before { border-color: var(--ok); background: var(--ok)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8.5l2.5 2.5L12 5.5' fill='none' stroke='%230e0e10' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/12px no-repeat; }
+  .fases li.omitida { text-decoration: line-through; opacity: .6; }
+  .fases li.omitida::before { border-style: dashed; }
+  .fases li.detenida::before { border-color: var(--aviso); background: var(--aviso); }
+  .fases li.fallida::before { border-color: var(--error); background: var(--error); }
+  @keyframes girar { to { transform: rotate(360deg); } }
+
+  .actual { background: var(--panel2); border: 1px solid var(--borde); border-radius: 10px; padding: 14px; display: grid; gap: 8px; }
+  .actual .fila { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; min-width: 0; }
+  .actual .fila strong { font-size: 1rem; }
+  .cifra { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .barra { height: 8px; border-radius: 999px; background: #0a0a0c; overflow: hidden; position: relative; }
+  .barra > div { height: 100%; width: 0; background: linear-gradient(90deg, #6f52f0, var(--acento)); border-radius: inherit; transition: width .35s ease; }
+  .barra.indeterminada > div { width: 35% !important; position: absolute; animation: vaiven 1.3s ease-in-out infinite; }
+  .barra.peque { height: 5px; }
+  @keyframes vaiven { 0% { left: -35%; } 100% { left: 100%; } }
+  .archivo { color: var(--tenue); font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; direction: rtl; text-align: left; }
+  .videos { display: grid; gap: 8px; margin-top: 4px; }
+  .video { display: grid; grid-template-columns: minmax(0, 1fr) 3.5em; gap: 4px 10px; align-items: center; font-size: .8rem; }
+  .video .barra { grid-column: 1 / -1; }
+
+  .aviso-final { border-radius: 10px; padding: 12px 14px; display: flex; gap: 10px; align-items: flex-start; margin-bottom: 14px; }
+  .aviso-final.terminado { background: rgba(62,207,142,.1); color: var(--ok); }
+  .aviso-final.detenido { background: rgba(245,185,71,.1); color: var(--aviso); }
+  .aviso-final.error { background: rgba(255,107,107,.1); color: var(--error); }
+  .aviso-final p { margin: 0; color: var(--texto); }
+  .aviso-final strong { display: block; margin-bottom: 2px; }
+
+  .resultados { display: grid; gap: 12px; margin-top: 14px; }
+  .resultado h4 { margin: 0 0 8px; font-size: .9rem; font-weight: 600; display: flex; gap: 8px; align-items: baseline; }
+  .resultado h4 span { color: var(--tenue); font-weight: 400; font-size: .8rem; }
+  .cifras { display: flex; flex-wrap: wrap; gap: 8px; }
+  .cifras div { background: var(--panel2); border: 1px solid var(--borde); border-radius: 8px; padding: 7px 12px; min-width: 92px; }
+  .cifras b { display: block; font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+  .cifras small { color: var(--tenue); font-size: .76rem; }
+  .cifras .principal { border-color: rgba(139,108,255,.5); background: var(--acento-suave); }
+  .cifras .mal b { color: var(--error); }
+  .cifras .ahorro b { color: var(--ok); }
+  .acciones-final { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+
+  .contadores { display: flex; gap: 12px; margin-left: auto; font-size: .82rem; }
+  .contadores .e { color: var(--error); }
+  .contadores .a { color: var(--aviso); }
+  details.registro { margin-top: 16px; border-top: 1px solid var(--borde); padding-top: 12px; }
+  details.registro > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  details.registro > summary::-webkit-details-marker { display: none; }
+  details.registro > summary strong { font-weight: 600; }
+  .herramientas { display: flex; gap: 12px; align-items: center; margin: 10px 0 8px; flex-wrap: wrap; }
+  .herramientas label { display: flex; align-items: center; gap: 6px; color: var(--tenue); font-size: .82rem; cursor: pointer; }
+  .herramientas input { accent-color: var(--acento); }
+  pre.log { margin: 0; background: #0a0a0c; border: 1px solid var(--borde); border-radius: 8px; padding: 10px 12px;
+            height: 340px; overflow: auto; font-size: .78rem; line-height: 1.5; white-space: pre-wrap; word-break: break-all; color: #c9c9d3; }
+  pre.log span { display: block; }
+  pre.log .error { color: var(--error); }
+  pre.log .aviso { color: var(--aviso); }
+  pre.log .ok { color: #9be3c2; }
+  pre.log .info { color: var(--info); }
+  pre.log .titulo { color: var(--texto); font-weight: 600; }
+  pre.log.filtrado span:not(.error):not(.aviso) { display: none; }
+
+  .vacio { color: var(--tenue); display: grid; gap: 10px; justify-items: start; }
+  .vacio h2 { margin: 0; }
+  .vacio p { margin: 0; max-width: 60ch; }
+  .vacio ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+
+  /* ---------- Historial ---------- */
+  .historial { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .historial li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 12px; align-items: center;
+                  padding: 9px 10px; border-radius: 8px; }
+  .historial li:hover { background: var(--panel2); }
+  .historial .icono { width: 9px; height: 9px; border-radius: 50%; background: var(--tenue); grid-row: span 2; }
+  .historial .terminado .icono { background: var(--ok); }
+  .historial .detenido .icono { background: var(--aviso); }
+  .historial .error .icono { background: var(--error); }
+  .historial strong { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .historial small { color: var(--tenue); grid-column: 2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .historial button { grid-row: 1 / span 2; grid-column: 3; }
+
+  .notificacion { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--panel2);
+                  border: 1px solid var(--borde); border-radius: 10px; padding: 10px 16px; box-shadow: 0 8px 30px rgba(0,0,0,.5);
+                  z-index: 50; max-width: calc(100vw - 32px); }
+  .notificacion.error { border-color: rgba(255,107,107,.5); color: var(--error); }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 15l-5-5-9 9"/></svg></div>
+  <h1>Exportador<span>Panel</span></h1>
+  <span id="estado-global" class="pastilla">Listo</span>
+</header>
+
+<main>
+  <div class="columna">
+    <section class="tarjeta" aria-labelledby="t-form">
+      <h2 id="t-form">¿Qué quieres hacer?</h2>
+      <div class="acciones" role="radiogroup" aria-labelledby="t-form" id="acciones"></div>
+
+      <div class="bloque" id="carpetas">
+        <div class="campo" data-para="importar">
+          <label for="c-origen">Carpeta de origen</label>
+          <div class="ruta">
+            <input type="text" id="c-origen" data-dest="origen" list="recientes" placeholder="C:\Users\Tu\Pictures\Movil" spellcheck="false" autocomplete="off">
+            <button type="button" class="boton" data-examinar="origen" data-titulo="Carpeta de origen (solo se lee)">Examinar…</button>
+          </div>
+          <div class="ayuda">Solo se lee: nunca se mueve, modifica ni borra nada en ella.</div>
+        </div>
+        <div class="campo" data-para="importar">
+          <label for="c-destino">Biblioteca destino</label>
+          <div class="ruta">
+            <input type="text" id="c-destino" data-dest="destino" list="recientes" placeholder="Por defecto: &lt;origen&gt;_organizados" spellcheck="false" autocomplete="off">
+            <button type="button" class="boton" data-examinar="destino" data-titulo="Biblioteca destino">Examinar…</button>
+          </div>
+          <div class="ayuda" id="info-destino">Donde se guarda todo, ordenado por fecha. Si ya existe, solo se añade lo nuevo.</div>
+        </div>
+        <div class="campo" data-para="biblioteca">
+          <label for="c-biblioteca">Biblioteca</label>
+          <div class="ruta">
+            <input type="text" id="c-biblioteca" data-dest="biblioteca" list="recientes" placeholder="D:\Biblioteca" spellcheck="false" autocomplete="off">
+            <button type="button" class="boton" data-examinar="biblioteca" data-titulo="Biblioteca ya organizada">Examinar…</button>
+          </div>
+          <div class="ayuda" id="info-biblioteca">Una carpeta ya organizada por el exportador.</div>
+        </div>
+        <datalist id="recientes"></datalist>
+      </div>
+
+      <div class="bloque" id="secciones"></div>
+
+      <div class="comando" title="Lo mismo desde la terminal">
+        <code id="linea" aria-label="Comando equivalente"></code>
+        <button type="button" class="boton peque" id="copiar" title="Copiar el comando">
+          <svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>
+        </button>
+      </div>
+      <p class="mensaje-form" id="mensaje-form" hidden></p>
+      <div class="botones">
+        <button type="button" class="boton" id="b-simular">
+          <svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          Simular
+        </button>
+        <button type="button" class="boton primario" id="b-ejecutar">
+          <svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg>
+          <span id="t-ejecutar">Importar</span>
+        </button>
+        <button type="button" class="boton" id="b-ver-galeria" hidden>Abrir galería</button>
+        <button type="button" class="enlace" id="restablecer">Valores por defecto</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="columna">
+    <section class="tarjeta" id="progreso" aria-live="polite">
+      <div class="vacio" id="p-vacio">
+        <h2>Progreso</h2>
+        <p>Aquí verás el avance de cada ejecución: fases, archivo actual, tiempo restante, vídeos codificándose y el resumen final.</p>
+        <ol>
+          <li>Elige qué hacer y las carpetas.</li>
+          <li>Pulsa <b>Simular</b> para ver qué haría sin tocar nada.</li>
+          <li>Si te convence, pulsa <b>Importar</b>.</li>
+        </ol>
+      </div>
+      <div id="p-trabajo" hidden>
+        <div class="cab">
+          <h3 id="p-titulo"></h3>
+          <span class="tiempo" id="p-tiempo"></span>
+          <span class="pastilla" id="p-estado"></span>
+          <button type="button" class="boton peligro peque" id="b-detener">
+            <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg> Detener
+          </button>
+        </div>
+        <div class="linea-trabajo mono" id="p-linea"></div>
+        <ol class="fases" id="p-fases"></ol>
+        <div id="p-final"></div>
+        <div class="actual" id="p-actual">
+          <div class="fila"><strong id="p-paso">Empezando…</strong><span class="cifra" id="p-cuenta"></span></div>
+          <div class="barra" id="p-barra"><div></div></div>
+          <div class="fila"><span class="archivo" id="p-archivo"></span><span class="tenue cifra" id="p-eta"></span></div>
+          <div class="videos" id="p-videos"></div>
+        </div>
+        <div class="resultados" id="p-resultados"></div>
+        <div class="acciones-final" id="p-acciones"></div>
+        <details class="registro" id="p-registro">
+          <summary><strong>Registro</strong><span class="tenue" id="p-lineas"></span>
+            <span class="contadores"><span class="e" id="p-errores"></span><span class="a" id="p-avisos"></span></span></summary>
+          <div class="herramientas">
+            <label><input type="checkbox" id="solo-problemas"> Solo errores y avisos</label>
+            <label><input type="checkbox" id="seguir" checked> Seguir el final</label>
+            <a class="enlace" href="/api/registro" download>Descargar registro</a>
+          </div>
+          <pre class="log" id="log"></pre>
+        </details>
+      </div>
+    </section>
+
+    <section class="tarjeta" id="t-historial" hidden>
+      <h2>Últimas ejecuciones</h2>
+      <ul class="historial" id="historial"></ul>
+    </section>
+  </div>
+</main>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------------------
+// Presentación de las acciones y opciones. Las opciones en sí (valores por defecto,
+// listas, ayudas y validación) vienen de main.py a través de /api/esquema: aquí
+// solo se decide cómo se muestran. Una opción nueva sin presentación aparece sola
+// en «Otras opciones».
+// ---------------------------------------------------------------------------
+const ICONOS = {
+  todo: '<path d="M4 7h16M4 12h16M4 17h10"/>',
+  fotos: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 15l-5-5-9 9"/>',
+  videos: '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/>',
+  audio: '<path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+  galeria: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  reorganizar: '<path d="M4 7h11l-3-3M20 17H9l3 3"/>',
+};
+const ACCIONES = [
+  ["todo", "Importar todo", "Fotos, vídeos y audio, y la galería al terminar"],
+  ["fotos", "Solo fotos", "Ordenar, renombrar y optimizar"],
+  ["videos", "Solo vídeos", "Recomprimir y ordenar (FFmpeg)"],
+  ["audio", "Solo audio", "Notas de voz, sin recomprimir"],
+  ["galeria", "Galería", "Crear o actualizar la galería web"],
+  ["reorganizar", "Reorganizar", "Ordenar una biblioteca ya importada"],
+];
+const BOTON = { todo: "Importar todo", fotos: "Importar fotos", videos: "Importar vídeos",
+                audio: "Importar audio", galeria: "Generar galería", reorganizar: "Reorganizar" };
+// Positional de cada acción en main.py -> campo del formulario
+const POSICIONAL = { galeria: ["carpeta", "biblioteca"], reorganizar: ["biblioteca", "biblioteca"] };
+
+// `para`: acciones en las que se muestra la sección (una opción puede estar en varias,
+// p. ej. las pegatinas: en Fotos al importar y en «Qué reorganizar» al reorganizar)
+const SECCIONES = [
+  { id: "fotos", titulo: "Fotos", para: ["todo", "fotos"],
+    campos: ["formato", "calidad", "max_lado_fotos", "hilos", "omitir_parecidas", "pegatinas_aparte"] },
+  { id: "videos", titulo: "Vídeos", para: ["todo", "videos"],
+    campos: ["codec", "max_lado_video", "hw", "hilos_video", "crf", "preset"] },
+  { id: "extras", titulo: "Biblioteca", para: ["todo", "fotos", "videos", "audio"],
+    campos: ["con_originales", "renombrar_aproximadas", "sin_audio", "sin_galeria"] },
+  { id: "galeria", titulo: "Galería", para: ["todo", "galeria"],
+    campos: ["caras", "descargar_lugares", "descargar_modelos_caras", "regenerar"] },
+  { id: "reorganizar", titulo: "Qué reorganizar", para: ["reorganizar"], abierta: true,
+    campos: ["whatsapp", "fechas_aproximadas", "pegatinas_aparte"] },
+];
+const CAMPOS = {
+  formato: { etiqueta: "Formato", lista: { jpeg: "JPEG (universal)", webp: "WebP (~30 % menos peso)" } },
+  calidad: { etiqueta: "Calidad", control: "rango" },
+  max_lado_fotos: { etiqueta: "Lado largo máximo", sufijo: "px", sugerencias: [0, 2048, 2560, 3200, 4096], cero: "sin límite" },
+  hilos: { etiqueta: "Fotos en paralelo", cero: "automático" },
+  omitir_parecidas: { etiqueta: "Omitir fotos casi idénticas" },
+  pegatinas_aparte: { etiqueta: "Pegatinas de WhatsApp aparte" },
+  codec: { etiqueta: "Códec", lista: { h264: "H.264 · MP4 universal", h265: "H.265 · MP4 más ligero", vp9: "VP9 · WebM libre" } },
+  max_lado_video: { etiqueta: "Lado largo máximo", sufijo: "px", sugerencias: [0, 1280, 1920, 2560, 3840], cero: "mantener" },
+  hw: { etiqueta: "Tarjeta gráfica (GPU)", lista: { no: "No: por software", auto: "Automático", nvenc: "NVIDIA (NVENC)", qsv: "Intel (QSV)", amf: "AMD (AMF)" } },
+  hilos_video: { etiqueta: "Vídeos a la vez" },
+  crf: { etiqueta: "Calidad constante (CRF)", vacio: "automático" },
+  preset: { etiqueta: "Velocidad de codificación" },
+  con_originales: { etiqueta: "Guardar también los originales" },
+  renombrar_aproximadas: { etiqueta: "Renombrar fechas aproximadas ya importadas" },
+  sin_audio: { etiqueta: "No importar audio" },
+  sin_galeria: { etiqueta: "No generar la galería al terminar" },
+  caras: { etiqueta: "Detectar y agrupar caras" },
+  descargar_lugares: { etiqueta: "Descargar ciudades (una vez, ~3 MB)" },
+  descargar_modelos_caras: { etiqueta: "Descargar modelos de caras (una vez, ~38 MB)" },
+  regenerar: { etiqueta: "Regenerar todo desde cero" },
+  whatsapp: { etiqueta: "Separar lo de WhatsApp" },
+  fechas_aproximadas: { etiqueta: "Renombrar fechas aproximadas" },
+};
+const FUERA_DE_SECCIONES = new Set(["origen", "destino", "carpeta", "biblioteca", "simular"]);
+const NOMBRES_FASE = { fotos: "fotos", videos: "vídeos", audio: "audios", galeria: "galería", reorganizar: "biblioteca" };
+
+// ---------------------------------------------------------------------------
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const crear = (etiqueta, props = {}, ...hijos) => {
+  const el = document.createElement(etiqueta);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") el.className = v;
+    else if (k === "dataset") Object.assign(el.dataset, v);
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (v !== undefined && v !== null && v !== false) el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const h of hijos.flat()) if (h !== null && h !== undefined && h !== false) el.append(h);
+  return el;
+};
+const icono = (nombre) => { const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  s.setAttribute("viewBox", "0 0 24 24"); s.innerHTML = ICONOS[nombre] || ""; return s; };
+const num = (n) => Number(n || 0).toLocaleString("es-ES");
+
+function bytes(n) {
+  const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0;
+  while (Math.abs(n) >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i ? n.toLocaleString("es-ES", { maximumFractionDigits: 1 }) : n) + " " + u[i];
+}
+function duracion(s) {
+  s = Math.max(0, Math.round(s || 0));
+  if (s < 60) return s + " s";
+  const m = Math.floor(s / 60), h = Math.floor(m / 60);
+  return h ? `${h} h ${m % 60} min` : `${m} min ${s % 60} s`;
+}
+function restante(s) {
+  if (s < 45) return "queda menos de un minuto";
+  if (s < 90) return "queda un minuto";
+  if (s < 3600) return `quedan unos ${Math.round(s / 60)} min`;
+  return `quedan unas ${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`;
+}
+async function api(ruta, datos) {
+  const opciones = datos === undefined ? {} : {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(datos) };
+  const r = await fetch(ruta, opciones);
+  let cuerpo = null;
+  try { cuerpo = await r.json(); } catch { /* sin JSON */ }
+  if (!r.ok) throw new Error((cuerpo && cuerpo.error) || `Error ${r.status}`);
+  return cuerpo;
+}
+let temporizadorNota;
+function notificar(texto, error = false) {
+  let n = $(".notificacion");
+  if (!n) { n = crear("div", { class: "notificacion", role: "status" }); document.body.append(n); }
+  n.textContent = texto; n.classList.toggle("error", error); n.hidden = false;
+  clearTimeout(temporizadorNota); temporizadorNota = setTimeout(() => (n.hidden = true), 4500);
+}
+
+// ---------------------------------------------------------------------------
+// Estado del formulario
+// ---------------------------------------------------------------------------
+let ESQUEMA = {};
+let comando = "todo";
+let valores = {};
+let defectos = {};
+let ultimaComprobacion = null;
+let ocupado = false;
+
+const opcionesDe = (c) => (ESQUEMA[c] ? ESQUEMA[c].opciones : []);
+const destsDe = (c) => new Set(opcionesDe(c).map((o) => o.dest));
+const definicion = (dest) => { for (const c in ESQUEMA) { const o = opcionesDe(c).find((x) => x.dest === dest); if (o) return o; } return null; };
+
+function valoresParaEnviar() {
+  const v = {};
+  const dests = destsDe(comando);
+  for (const [k, x] of Object.entries(valores)) if (dests.has(k)) v[k] = x;
+  if (POSICIONAL[comando]) v[POSICIONAL[comando][0]] = valores[POSICIONAL[comando][1]] || "";
+  return v;
+}
+
+function pintarAcciones() {
+  const cont = $("#acciones");
+  cont.replaceChildren(...ACCIONES.filter(([c]) => ESQUEMA[c]).map(([c, titulo, desc]) =>
+    crear("button", { type: "button", class: "accion", role: "radio", "aria-checked": String(c === comando),
+                      title: ESQUEMA[c].ayuda, onclick: () => elegirComando(c) },
+      crear("strong", {}, icono(c), titulo), crear("span", {}, desc))));
+}
+
+function control(op, cfg, idBase) {
+  const id = `${idBase}-${op.dest}`;
+  const ayuda = op.ayuda ? crear("div", { class: "ayuda" }, op.ayuda) : null;
+  const etiqueta = cfg.etiqueta || op.dest.replace(/_/g, " ");
+  if (op.tipo === "si_no") {
+    const input = crear("input", { type: "checkbox", id, dataset: { dest: op.dest } });
+    return crear("label", { class: "interruptor ancho", for: id, title: op.opcion },
+      input, crear("span", { class: "etiqueta" }, etiqueta), ayuda);
+  }
+  let input;
+  if (op.tipo === "lista") {
+    input = crear("select", { id, dataset: { dest: op.dest } },
+      op.opciones.map((x) => crear("option", { value: x }, (cfg.lista && cfg.lista[x]) || x)));
+  } else if (cfg.control === "rango") {
+    input = crear("input", { type: "range", id, min: op.min ?? 1, max: op.max ?? 100, dataset: { dest: op.dest } });
+    const salida = crear("output", { for: id });
+    input.addEventListener("input", () => (salida.value = input.value));
+    input._salida = salida;
+    return crear("div", { class: "campo" }, crear("label", { for: id, title: op.opcion }, etiqueta),
+      crear("div", { class: "rango" }, input, salida), ayuda);
+  } else {
+    const lista = cfg.sugerencias ? `${id}-sug` : null;
+    input = crear("input", { type: op.tipo === "numero" ? "number" : "text", id, min: op.min ?? undefined,
+      max: op.max ?? undefined, step: op.tipo === "numero" ? 1 : undefined, list: lista,
+      placeholder: cfg.vacio || (op.defecto != null ? String(op.defecto) : ""), dataset: { dest: op.dest } });
+    const extra = [];
+    if (lista) extra.push(crear("datalist", { id: lista }, cfg.sugerencias.map((x) => crear("option", { value: x }, x === 0 ? cfg.cero : `${x} ${cfg.sufijo || ""}`))));
+    const nota = cfg.cero ? crear("div", { class: "ayuda" }, `0 = ${cfg.cero}`) : null;
+    return crear("div", { class: "campo" }, crear("label", { for: id, title: op.opcion }, etiqueta), input, ...extra,
+      nota && !op.ayuda ? nota : null, ayuda);
+  }
+  return crear("div", { class: "campo" }, crear("label", { for: id, title: op.opcion }, etiqueta), input, ayuda);
+}
+
+function pintarSecciones() {
+  const todos = new Set();
+  for (const c in ESQUEMA) for (const o of opcionesDe(c)) if (!o.posicional && !FUERA_DE_SECCIONES.has(o.dest)) todos.add(o.dest);
+  const colocados = new Set(SECCIONES.flatMap((s) => s.campos));
+  const otras = [...todos].filter((d) => !colocados.has(d));
+  const secciones = [...SECCIONES, ...(otras.length ? [{ id: "otras", titulo: "Otras opciones", campos: otras }] : [])];
+  const abiertas = JSON.parse(sessionStorage.getItem("secciones") || "[]");
+  $("#secciones").replaceChildren(...secciones.map((s) => {
+    const contenido = crear("div", { class: "contenido" });
+    for (const dest of s.campos) {
+      const op = definicion(dest);
+      if (op) contenido.append(Object.assign(control(op, CAMPOS[dest] || {}, `s-${s.id}`), { _dest: dest }));
+    }
+    const det = crear("details", { class: "seccion", dataset: { seccion: s.id, para: (s.para || []).join(" ") },
+                                   open: s.abierta || abiertas.includes(s.id) },
+      crear("summary", {}, crear("strong", {}, s.titulo), crear("span", { class: "resumen" })), contenido);
+    det.addEventListener("toggle", () => {
+      const ab = $$("details.seccion[open]").map((d) => d.dataset.seccion);
+      try { sessionStorage.setItem("secciones", JSON.stringify(ab)); } catch { /* sin almacenamiento */ }
+    });
+    return det;
+  }));
+  $$("#secciones [data-dest]").forEach((el) => {
+    el.addEventListener(el.type === "checkbox" || el.tagName === "SELECT" || el.type === "range" ? "change" : "input", () => {
+      valores[el.dataset.dest] = el.type === "checkbox" ? el.checked : el.value;
+      sincronizar(el.dataset.dest, el);
+      cambio();
+    });
+    if (el.type === "range") el.addEventListener("input", () => { valores[el.dataset.dest] = el.value; resumirSecciones(); });
+  });
+}
+
+function sincronizar(dest, origen) {
+  for (const el of $$(`[data-dest="${dest}"]`)) {
+    if (el === origen) continue;
+    const v = valores[dest];
+    if (el.type === "checkbox") el.checked = v === true;
+    else el.value = v ?? "";
+    if (el._salida) el._salida.value = el.value;
+  }
+}
+
+function aplicarValores() {
+  for (const el of $$("[data-dest]")) {
+    const v = valores[el.dataset.dest];
+    if (el.type === "checkbox") el.checked = v === true;
+    else el.value = v ?? "";
+    if (el._salida) el._salida.value = el.value;
+  }
+}
+
+function elegirComando(c) {
+  comando = c;
+  pintarAcciones();
+  const dests = destsDe(c);
+  const esImportar = dests.has("origen");
+  $$('[data-para="importar"]').forEach((el) => (el.hidden = !esImportar));
+  $$('[data-para="biblioteca"]').forEach((el) => (el.hidden = esImportar));
+  if (!esImportar && !valores.biblioteca && ultimaComprobacion && ultimaComprobacion.carpeta && ultimaComprobacion.comando !== c) {
+    valores.biblioteca = ultimaComprobacion.carpeta; aplicarValores();
+  }
+  for (const det of $$("details.seccion")) {
+    const para = det.dataset.para ? det.dataset.para.split(" ") : null;   // null: según las opciones
+    let visibles = 0;
+    for (const campo of $(".contenido", det).children) {
+      const ver = dests.has(campo._dest) && (!para || para.includes(c));
+      campo.hidden = !ver; visibles += ver;
+    }
+    det.hidden = !visibles;
+  }
+  $("#info-biblioteca").textContent = c === "galeria"
+    ? "Una carpeta ya organizada: se crea o actualiza su galería (solo lo nuevo, salvo «Regenerar»)."
+    : "Una carpeta ya organizada. Solo se mueve o renombra dentro de ella.";
+  $("#b-simular").hidden = !(ESQUEMA[c] && ESQUEMA[c].simular);
+  $("#t-ejecutar").textContent = BOTON[c] || "Ejecutar";
+  cambio();
+}
+
+function resumirSecciones() {
+  const v = valores, d = (k) => v[k] === true;
+  const txt = {
+    fotos: [ (v.formato || "jpeg").toUpperCase(), `calidad ${v.calidad}`, +v.max_lado_fotos ? `${v.max_lado_fotos} px` : "sin reducir",
+             d("omitir_parecidas") && "sin parecidas" ],
+    videos: [ (v.codec || "").toUpperCase(), +v.max_lado_video ? `${v.max_lado_video} px` : "tamaño original",
+              v.hw && v.hw !== "no" ? `GPU ${v.hw}` : "software", +v.hilos_video > 1 && `${v.hilos_video} a la vez` ],
+    extras: [ d("con_originales") && "con originales", d("sin_audio") && "sin audio", d("sin_galeria") && "sin galería",
+              d("renombrar_aproximadas") && "renombrar aproximadas" ],
+    galeria: [ d("caras") && "caras", d("regenerar") && "regenerar", (d("descargar_lugares") || d("descargar_modelos_caras")) && "descargas" ],
+    reorganizar: [ d("whatsapp") && "WhatsApp", d("fechas_aproximadas") && "fechas aproximadas" ],
+  };
+  for (const det of $$("details.seccion")) {
+    const partes = (txt[det.dataset.seccion] || []).filter(Boolean);
+    $(".resumen", det).textContent = partes.length ? partes.join(" · ") : (det.dataset.seccion === "reorganizar" ? "elige al menos una" : "");
+  }
+}
+
+let temporizadorComprobar, numeroComprobacion = 0;
+function cambio() {
+  resumirSecciones();
+  clearTimeout(temporizadorComprobar);
+  temporizadorComprobar = setTimeout(comprobar, 220);
+}
+
+async function comprobar() {
+  const n = ++numeroComprobacion;
+  let r;
+  try { r = await api("/api/comprobar", { comando, valores: valoresParaEnviar(), simular: false }); }
+  catch (e) { r = { error: e.message }; }
+  if (n !== numeroComprobacion) return;   // llegó otra más reciente
+  ultimaComprobacion = { ...r, comando };
+  $("#linea").textContent = r.linea || "";
+  const msg = $("#mensaje-form");
+  const esPista = r.error && /^Elige|Indica qué/.test(r.error);
+  msg.hidden = !r.error;
+  msg.className = "mensaje-form " + (esPista ? "pista" : "error");
+  msg.textContent = (r.error || "").replace(/^Indica qué reorganizar.*/, "Elige al menos una opción en «Qué reorganizar».");
+  // Información sobre la biblioteca destino
+  const info = destsDe(comando).has("origen") ? $("#info-destino") : $("#info-biblioteca");
+  if (!r.error && r.carpeta) {
+    if (destsDe(comando).has("origen")) {
+      const usada = valores.destino ? "" : `Se usará ${r.carpeta}. `;
+      info.textContent = usada + (r.biblioteca_existe ? "Biblioteca existente: solo se añadirá lo nuevo."
+                                                        : "Se creará una biblioteca nueva.");
+      info.className = "ayuda" + (r.biblioteca_existe ? " ok" : "");
+    } else if (comando === "reorganizar" && !r.biblioteca_existe) {
+      info.textContent = "Esta carpeta no tiene catálogo del exportador: no hay nada que reorganizar.";
+      info.className = "ayuda aviso";
+    } else {
+      info.textContent = r.galeria_existe && comando === "galeria" ? "Ya tiene galería: se actualizará (solo lo nuevo)." : "Biblioteca encontrada.";
+      info.className = "ayuda ok";
+    }
+  } else if (!r.error) {
+    info.className = "ayuda";
+  }
+  actualizarBotones();
+}
+
+function actualizarBotones() {
+  const valido = ultimaComprobacion && !ultimaComprobacion.error;
+  $("#b-ver-galeria").hidden = !(valido && comando === "galeria" && ultimaComprobacion.galeria_existe);
+  $("#b-ejecutar").disabled = ocupado || !valido;
+  $("#b-simular").disabled = ocupado || !valido;
+  $("#b-ejecutar").title = ocupado ? "Hay una ejecución en marcha" : "";
+}
+
+async function lanzar(simular) {
+  try {
+    await api("/api/ejecutar", { comando, valores: valoresParaEnviar(), simular });
+    ocupado = true; actualizarBotones();
+    reiniciarRegistro();
+    consultar(true);
+    if (window.matchMedia("(max-width: 1050px)").matches) $("#progreso").scrollIntoView({ behavior: "smooth" });
+  } catch (e) { notificar(e.message, true); }
+}
+
+async function examinar(boton) {
+  const dest = boton.dataset.examinar;
+  const original = boton.textContent;
+  boton.disabled = true; boton.textContent = "Abriendo…";
+  notificar("Se abre una ventana para elegir la carpeta (si no la ves, búscala en la barra de tareas).");
+  try {
+    const inicial = valores[dest] || (dest === "destino" ? valores.origen : "") || "";
+    const r = await api("/api/elegir-carpeta", { inicial, titulo: boton.dataset.titulo });
+    if (r.ruta) { valores[dest] = r.ruta; aplicarValores(); cambio(); }
+    $(".notificacion") && ($(".notificacion").hidden = true);
+  } catch (e) { notificar(e.message, true); }
+  finally { boton.disabled = false; boton.textContent = original; }
+}
+
+// ---------------------------------------------------------------------------
+// Progreso
+// ---------------------------------------------------------------------------
+let trabajoMostrado = null;
+let siguienteLinea = 0;
+let ultimoEstado = null;
+let temporizadorConsulta;
+
+function reiniciarRegistro() { siguienteLinea = 0; $("#log").replaceChildren(); }
+
+async function consultar(inmediato = false) {
+  clearTimeout(temporizadorConsulta);
+  let r = null;
+  try { r = await api(`/api/estado?desde=${siguienteLinea}`); } catch { /* el panel se habrá cerrado */ }
+  let pendiente = false;
+  if (r) {
+    const t = r.trabajo;
+    if (t && trabajoMostrado !== t.numero) { trabajoMostrado = t.numero; reiniciarRegistro(); r = await api("/api/estado?desde=0"); }
+    if (r.trabajo) { pintarTrabajo(r.trabajo); pendiente = r.trabajo.registro.total > siguienteLinea; }
+    const enMarcha = r.trabajo && ["en_marcha", "deteniendo"].includes(r.trabajo.estado);
+    if (ultimoEstado && ultimoEstado !== "fin" && !enMarcha && r.trabajo) { cargarHistorial(); comprobar(); }
+    ultimoEstado = enMarcha ? "marcha" : "fin";
+    ocupado = !!enMarcha; actualizarBotones();
+    estadoGlobal(r.trabajo);
+  } else {
+    estadoGlobal(null, true);
+  }
+  const espera = pendiente ? 50 : ocupado ? 700 : 2500;
+  temporizadorConsulta = setTimeout(consultar, espera);
+}
+
+function estadoGlobal(t, desconectado = false) {
+  const p = $("#estado-global");
+  if (desconectado) { p.className = "pastilla error"; p.textContent = "Panel cerrado"; document.title = "Exportador"; return; }
+  if (!t) { p.className = "pastilla"; p.textContent = "Listo"; document.title = "Exportador"; return; }
+  const textos = { en_marcha: "En marcha", deteniendo: "Deteniendo…", terminado: "Terminado", detenido: "Detenido", error: "Con error" };
+  p.className = "pastilla " + t.estado; p.textContent = textos[t.estado] || t.estado;
+  const activa = t.fases.find((f) => f.estado === "en_curso");
+  if (t.estado === "en_marcha" && activa && activa.total) document.title = `${Math.floor(100 * activa.hecho / activa.total)} % · ${activa.titulo} · Exportador`;
+  else if (t.estado === "en_marcha") document.title = "En marcha · Exportador";
+  else document.title = (t.estado === "terminado" ? "✓ " : "") + "Exportador";
+}
+
+function pintarTrabajo(t) {
+  $("#p-vacio").hidden = true; $("#p-trabajo").hidden = false;
+  const enMarcha = ["en_marcha", "deteniendo"].includes(t.estado);
+  $("#p-titulo").textContent = t.titulo;
+  $("#p-linea").textContent = t.linea;
+  $("#p-tiempo").textContent = duracion(t.duracion);
+  const textos = { en_marcha: "En marcha", deteniendo: "Deteniendo…", terminado: "Terminado", detenido: "Detenido", error: "Error" };
+  $("#p-estado").className = "pastilla " + t.estado; $("#p-estado").textContent = textos[t.estado];
+  $("#b-detener").hidden = !enMarcha; $("#b-detener").disabled = t.estado === "deteniendo";
+
+  // Fases
+  $("#p-fases").replaceChildren(...t.fases.map((f) => {
+    let extra = "";
+    if (f.estado === "en_curso" && f.total) extra = ` ${num(f.hecho)}/${num(f.total)}`;
+    else if (f.estado === "omitida") extra = f.motivo ? ` (${f.motivo})` : "";
+    else if (f.estado === "hecha" && f.duracion) extra = ` · ${duracion(f.duracion)}`;
+    return crear("li", { class: f.estado, title: f.motivo || "" }, f.titulo, crear("span", { class: "tenue cifra" }, extra));
+  }));
+
+  // Fase actual
+  const activa = t.fases.find((f) => f.estado === "en_curso");
+  $("#p-actual").hidden = !enMarcha;
+  if (enMarcha) {
+    const barra = $("#p-barra");
+    if (activa) {
+      const nombre = NOMBRES_FASE[activa.fase] || activa.fase;
+      $("#p-paso").textContent = activa.paso ? `${activa.paso} ${nombre}` : `${activa.titulo}: empezando…`;
+      $("#p-cuenta").textContent = activa.total ? `${num(activa.hecho)} / ${num(activa.total)} · ${Math.floor(100 * activa.hecho / activa.total)} %` : "";
+      barra.classList.toggle("indeterminada", !activa.total);
+      barra.firstElementChild.style.width = activa.total ? `${(100 * activa.hecho / activa.total).toFixed(1)}%` : "";
+      $("#p-archivo").textContent = activa.archivo ? "\u200E" + activa.archivo : "";
+      let eta = "";
+      if (activa.total && activa.hecho >= 2 && activa.segundos_paso > 3 && activa.hecho < activa.total)
+        eta = restante(activa.segundos_paso / activa.hecho * (activa.total - activa.hecho));
+      $("#p-eta").textContent = eta;
+    } else {
+      $("#p-paso").textContent = t.estado === "deteniendo" ? "Deteniendo…" : "Preparando…";
+      $("#p-cuenta").textContent = ""; $("#p-archivo").textContent = ""; $("#p-eta").textContent = "";
+      barra.classList.add("indeterminada");
+    }
+    $("#p-videos").replaceChildren(...t.videos.map((v) => {
+      const b = crear("div", { class: "barra peque" }, crear("div"));
+      b.firstElementChild.style.width = `${v.porcentaje}%`;
+      return crear("div", { class: "video" }, crear("span", { class: "archivo" }, "\u200E" + v.archivo),
+        crear("span", { class: "cifra tenue", style: "text-align:right" }, `${v.porcentaje} %`), b);
+    }));
+  }
+
+  // Mensaje final, resultados y acciones
+  const final = $("#p-final");
+  if (!enMarcha) {
+    const titulos = {
+      terminado: t.simular ? "Simulación terminada: no se ha tocado nada." : `Terminado en ${duracion(t.duracion)}.`,
+      detenido: "Detenido.", error: "No se ha completado." };
+    const textos = {
+      terminado: t.errores ? `Con ${t.errores} error(es) o archivo(s) dañado(s): revisa el registro.` : (t.simular ? "Revisa el resultado y, si te convence, ejecútalo de verdad." : "Todo en orden."),
+      detenido: "Lo ya terminado queda registrado; vuelve a ejecutar para continuar donde se quedó.",
+      error: t.mensaje || "Revisa el registro." };
+    final.replaceChildren(crear("div", { class: "aviso-final " + t.estado },
+      crear("p", {}, crear("strong", {}, titulos[t.estado]), textos[t.estado])));
+  } else final.replaceChildren();
+  pintarResultados(t);
+  pintarAccionesFinales(t, enMarcha);
+
+  // Registro
+  const log = $("#log");
+  const seguir = $("#seguir").checked;
+  const frag = document.createDocumentFragment();
+  for (const [nivel, texto] of t.registro.lineas) frag.append(crear("span", { class: nivel }, texto || "\u00A0"));
+  if (t.registro.desde > siguienteLinea) log.append(crear("span", { class: "aviso" }, "… (líneas anteriores omitidas)"));
+  log.append(frag);
+  siguienteLinea = t.registro.desde + t.registro.lineas.length;
+  while (log.childElementCount > 6000) log.firstElementChild.remove();
+  if (seguir && t.registro.lineas.length) log.scrollTop = log.scrollHeight;
+  $("#p-lineas").textContent = `${num(t.registro.total)} líneas`;
+  $("#p-errores").textContent = t.errores ? `${num(t.errores)} error(es)` : "";
+  $("#p-avisos").textContent = t.avisos ? `${num(t.avisos)} aviso(s)` : "";
+  if (t.errores && !$("#p-registro").dataset.abierto) { $("#p-registro").open = true; $("#p-registro").dataset.abierto = "1"; }
+}
+
+function cifras(f, simular) {
+  const r = f.resumen || {};
+  const c = (valor, texto, clase = "") => ({ valor, texto, clase });
+  if (f.fase === "galeria") return [c(num(r.fotos), "fotos", "principal"), c(num(r.videos), "vídeos"), c(num(r.audios), "audios"),
+    c(num(r.nuevos), "nuevos o cambiados"), r.grupos_parecidas ? c(num(r.grupos_parecidas), "grupos de parecidas") : null];
+  if (f.fase === "reorganizar") return [c(num(r.movidos), simular ? "se moverían" : "movidos o renombrados", "principal"),
+    r.errores ? c(num(r.errores), "errores", "mal") : null];
+  const n = NOMBRES_FASE[f.fase];
+  const algo = ["procesados", "ya_importados", "duplicados", "omitidos", "danados", "errores", "parecidas_omitidas"];
+  if (!algo.some((k) => r[k])) return [c("—", `no había ${n}`)];
+  const lista = [
+    c(num(r.procesados), simular ? `${n} a importar` : `${n} ${f.fase === "fotos" ? "importadas" : "importados"}`, "principal"),
+    r.ya_importados ? c(num(r.ya_importados), "ya estaban") : null,
+    r.sin_cambios && f.fase !== "audio" ? c(num(r.sin_cambios), "sin recomprimir") : null,
+    r.duplicados ? c(num(r.duplicados), "duplicados") : null,
+    r.parecidas ? c(num(r.parecidas), "parecidas") : null,
+    r.parecidas_omitidas ? c(num(r.parecidas_omitidas), "parecidas omitidas") : null,
+    r.omitidos ? c(num(r.omitidos), "omitidos", "mal") : null,
+    r.danados ? c(num(r.danados), "dañados", "mal") : null,
+    r.errores ? c(num(r.errores), "errores", "mal") : null,
+    r.por_hardware ? c(num(r.por_hardware), "por GPU") : null,
+  ];
+  if (!simular && r.bytes_antes) {
+    const ahorro = Math.round((1 - r.bytes_despues / r.bytes_antes) * 100);
+    lista.push(c(`${bytes(r.bytes_antes)} → ${bytes(r.bytes_despues)}`, `ahorro ${ahorro} %`, ahorro > 0 ? "ahorro" : ""));
+  }
+  return lista;
+}
+
+function pintarResultados(t) {
+  const conResumen = t.fases.filter((f) => f.resumen);
+  $("#p-resultados").replaceChildren(...conResumen.map((f) => crear("div", { class: "resultado" },
+    crear("h4", {}, f.titulo, f.duracion ? crear("span", {}, duracion(f.duracion)) : null),
+    crear("div", { class: "cifras" }, cifras(f, t.simular).filter(Boolean).map((x) =>
+      crear("div", { class: x.clase }, crear("b", {}, x.valor), crear("small", {}, x.texto)))))));
+}
+
+function pintarAccionesFinales(t, enMarcha) {
+  const cont = $("#p-acciones");
+  if (enMarcha) { cont.replaceChildren(); return; }
+  const botones = [];
+  if (t.simular && t.estado === "terminado")
+    botones.push(crear("button", { type: "button", class: "boton primario", onclick: () => repetir(t, false) },
+      crear("span", {}, `${BOTON[t.comando] || "Ejecutar"} de verdad`)));
+  if (t.galeria_existe && !(t.simular && t.comando !== "galeria"))
+    botones.push(crear("button", { type: "button", class: "boton", onclick: () => abrirGaleria(t.carpeta) }, icono("galeria"), "Abrir la galería"));
+  botones.push(crear("button", { type: "button", class: "boton", onclick: () => abrirCarpeta(t.carpeta) },
+    crear("span", {}, "Abrir la carpeta")));
+  if (!t.simular || t.estado !== "terminado")
+    botones.push(crear("button", { type: "button", class: "boton", onclick: () => repetir(t, t.simular) }, "Repetir"));
+  cont.replaceChildren(...botones);
+}
+
+function cargarEnFormulario(h) {
+  comando = ESQUEMA[h.comando] ? h.comando : "todo";
+  valores = { ...defectos, ...h.valores };
+  if (POSICIONAL[comando] && h.valores[POSICIONAL[comando][0]]) valores[POSICIONAL[comando][1]] = h.valores[POSICIONAL[comando][0]];
+  aplicarValores(); elegirComando(comando);
+}
+
+async function repetir(t, simular) {
+  cargarEnFormulario(t);
+  await comprobar();
+  if (ultimaComprobacion && !ultimaComprobacion.error) lanzar(simular);
+}
+
+async function abrirGaleria(carpeta) {
+  const ventana = window.open("about:blank", "_blank");   // antes del await, o la bloquea el navegador
+  try {
+    const r = await api("/api/galeria", { carpeta });
+    if (ventana) ventana.location = r.url; else window.location = r.url;
+  } catch (e) { if (ventana) ventana.close(); notificar(e.message, true); }
+}
+
+async function abrirCarpeta(carpeta) {
+  try { await api("/api/abrir-carpeta", { carpeta }); } catch (e) { notificar(e.message, true); }
+}
+
+// ---------------------------------------------------------------------------
+// Historial
+// ---------------------------------------------------------------------------
+async function cargarHistorial() {
+  let p;
+  try { p = await api("/api/preferencias"); } catch { return; }
+  pintarHistorial(p.historial || []);
+  $("#recientes").replaceChildren(...(p.recientes || []).map((r) => crear("option", { value: r })));
+  return p;
+}
+
+function pintarHistorial(historial) {
+  $("#t-historial").hidden = !historial.length;
+  const fecha = (s) => new Date(s * 1000).toLocaleString("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  $("#historial").replaceChildren(...historial.map((h) => {
+    const resumen = Object.entries(h.resumen || {}).map(([fase, r]) => {
+      if (fase === "galeria") return `galería: ${num(r.fotos + r.videos + r.audios)} elementos`;
+      if (fase === "reorganizar") return `${num(r.movidos)} reorganizados`;
+      return `${num(r.procesados)} ${NOMBRES_FASE[fase] || fase}`;
+    }).join(" · ");
+    const estados = { terminado: "", detenido: " · detenido", error: " · con error" };
+    return crear("li", { class: h.estado },
+      crear("span", { class: "icono", title: h.estado }),
+      crear("strong", { title: h.linea }, h.titulo),
+      crear("small", { title: h.carpeta }, `${fecha(h.inicio)}${estados[h.estado] ?? ""} · ${resumen || h.carpeta}`),
+      crear("button", { type: "button", class: "boton peque", title: "Cargar estas opciones en el formulario",
+        onclick: () => { cargarEnFormulario(h); notificar("Opciones cargadas en el formulario."); } }, "Usar"));
+  }));
+}
+
+// ---------------------------------------------------------------------------
+async function iniciar() {
+  ESQUEMA = await api("/api/esquema");
+  for (const c in ESQUEMA) for (const o of opcionesDe(c)) {
+    if (!(o.dest in defectos) && o.defecto !== null && o.dest !== "simular") defectos[o.dest] = o.tipo === "si_no" ? false : o.defecto;
+  }
+  pintarSecciones();
+  const prefs = (await cargarHistorial()) || {};
+  valores = { ...defectos, ...(prefs.valores || {}) };
+  if (prefs.comando && ESQUEMA[prefs.comando]) comando = prefs.comando;
+  if (POSICIONAL[comando] && valores[POSICIONAL[comando][0]]) valores[POSICIONAL[comando][1]] = valores[POSICIONAL[comando][0]];
+  if (!valores.biblioteca && valores.carpeta) valores.biblioteca = valores.carpeta;
+  aplicarValores();
+  elegirComando(comando);
+
+  $$("#carpetas [data-dest]").forEach((el) => el.addEventListener("input", () => { valores[el.dataset.dest] = el.value.trim(); cambio(); }));
+  $$("[data-examinar]").forEach((b) => b.addEventListener("click", () => examinar(b)));
+  $("#b-ejecutar").addEventListener("click", () => lanzar(false));
+  $("#b-simular").addEventListener("click", () => lanzar(true));
+  $("#b-ver-galeria").addEventListener("click", () => abrirGaleria(ultimaComprobacion.carpeta));
+  $("#b-detener").addEventListener("click", async () => {
+    if (!confirm("¿Detener la ejecución? Lo ya terminado queda registrado y lo que esté a medias se descarta.")) return;
+    try { await api("/api/detener", {}); consultar(true); } catch (e) { notificar(e.message, true); }
+  });
+  $("#restablecer").addEventListener("click", () => {
+    const carpetas = { origen: valores.origen, destino: valores.destino, biblioteca: valores.biblioteca };
+    valores = { ...defectos, ...carpetas }; aplicarValores(); cambio();
+    notificar("Opciones restablecidas (las carpetas se mantienen).");
+  });
+  $("#copiar").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText($("#linea").textContent); notificar("Comando copiado."); }
+    catch { notificar("No se ha podido copiar.", true); }
+  });
+  $("#solo-problemas").addEventListener("change", (e) => $("#log").classList.toggle("filtrado", e.target.checked));
+  consultar(true);
+}
+
+iniciar().catch((e) => notificar("No se ha podido cargar el panel: " + e.message, true));
+</script>
+</body>
+</html>
