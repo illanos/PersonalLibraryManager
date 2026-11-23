@@ -14,7 +14,7 @@ miniaturas) se guarda y se reutiliza.
 
 ```
 Exportador/
-├── main.py                 Punto de entrada (CLI: fotos, videos, audio, todo, reorganizar, galeria)
+├── main.py                 Punto de entrada (CLI: fotos, videos, audio, todo, reorganizar, fusionar, galeria)
 ├── media_utils.py          Utilidades comunes (fechas, nombres, listado, resumen)
 ├── catalogo.py             Catálogo SQLite de lo importado y descartado + informe CSV
 ├── clasificacion.py        WhatsApp, pegatinas y capturas; carpeta de destino de cada cosa
@@ -26,6 +26,7 @@ Exportador/
 ├── videos.py               Importación de vídeos (ffprobe + FFmpeg, en paralelo, GPU opcional)
 ├── audio.py                Importación de notas de voz y audio (copia sin recomprimir)
 ├── reorganizar.py          Ordenar una biblioteca ya importada (solo dentro de ella)
+├── fusionar.py             Añadir otra colección a la biblioteca sin repetir (por días, la mejor copia)
 ├── galeria.py              Índice de la galería y miniaturas
 ├── lugares.py              Lugar a partir del GPS, sin conexión (GeoNames)
 ├── caras.py                Detección y agrupación local de caras (OpenCV, opcional)
@@ -76,6 +77,10 @@ python main.py galeria "D:\Biblioteca" --servir --caras
 
 # Ordenar lo que se importó con versiones anteriores (solo dentro de la biblioteca)
 python main.py reorganizar "D:\Biblioteca" --whatsapp --fechas-aproximadas --simular
+
+# Añadir otra colección (p. ej. la biblioteca de Google Fotos) sin repetir nada
+python main.py fusionar "D:\Google" --destino "D:\Biblioteca" --simular
+python main.py fusionar "D:\Google" --destino "D:\Biblioteca"
 ```
 
 Opciones principales (`python main.py <comando> -h` para verlas todas):
@@ -104,6 +109,10 @@ Opciones principales (`python main.py <comando> -h` para verlas todas):
 | `--descargar-lugares`, `--descargar-modelos-caras` | galeria, todo | Descargas únicas de datos (ver arriba) |
 | `--regenerar` | galeria | Rehace metadatos y miniaturas aunque no hayan cambiado |
 | `--whatsapp`, `--fechas-aproximadas` | reorganizar | Qué reordenar en una biblioteca ya importada |
+| `--umbral N` | fusionar | Bits (0-12) para que dos fotos sean la misma (5: copias recomprimidas o reducidas) |
+| `--margen-dias N` | fusionar | Días antes y después con los que se compara (1; `0` = solo el mismo día) |
+| `--max-lado`, `--calidad` | fusionar | Solo para lo que hay que reducir o convertir al añadir (3200, 88) |
+| `--sin-galeria` | fusionar | No actualizar la galería de la biblioteca al terminar |
 
 ## Resultado
 
@@ -118,7 +127,7 @@ Biblioteca/
 ├── .exportador/catalogo.sqlite              qué se importó o descartó, de dónde y con qué resultado
 ├── .exportador/informes/fotos_*.csv         una fila por archivo y ejecución (abre en Excel)
 ├── .exportador/informes/danados_*.csv       archivos dañados de cada ejecución
-├── .exportador/papelera/…                   fotos quitadas con «Limpiar repetidas» (misma ruta)
+├── .exportador/papelera/…                   lo quitado con «Limpiar repetidas» o sustituido al fusionar
 ├── .exportador/limpieza.json                decisiones de «Limpiar repetidas» (seguir otro día)
 ├── galeria.html + galeria.json              galería web
 └── _galeria/thumbs, favoritos.json, caras.sqlite, personas.json
@@ -283,6 +292,53 @@ funciona con `--servir` (necesita el servidor). Lógica en `limpieza.py`, interf
   envía) y la cabecera `X-Exportador-Token` con un secreto aleatorio de cada ejecución del
   servidor, que solo puede leer la propia página: otra web abierta en el navegador no puede
   provocar estas acciones (CSRF). Como el resto del servidor, solo escucha en 127.0.0.1.
+
+## Fusionar colecciones
+
+`python main.py fusionar <colección> --destino <biblioteca>` añade a una biblioteca las
+fotos y vídeos de otra colección —otra biblioteca del exportador, como la de Google Fotos,
+o cualquier carpeta— sin repetir lo que ya tiene. Lógica en `fusionar.py`.
+
+- **Por días**: cada foto o vídeo de la colección solo se compara con los de la biblioteca
+  del mismo día, ± `--margen-dias` (1 por defecto: fotos de cerca de medianoche o con la
+  fecha en otra zona horaria). La fecha es la del catálogo de cada una (la de captura) y,
+  si no hay catálogo, la de la galería o la del archivo.
+- **Fotos iguales**: dHash a `--umbral` bits o menos (5 por defecto, lo que separa una foto
+  de su copia recomprimida, reducida o reenviada), proporción compatible y, si las dos
+  tienen fecha EXIF, la misma: otra toma de una ráfaga se parece mucho pero no es una
+  copia, así que se añade (el resumen la cuenta como *parecida*, para revisarla luego en
+  *Limpiar repetidas*). También son iguales las que vienen del mismo original (mismo MD5
+  en los dos catálogos) y los archivos idénticos.
+- **Vídeos iguales** (requiere FFmpeg; sin él se omiten): duración casi igual (±1 s o
+  ±2 %), proporción compatible y fotogramas parecidos (≤ 8 bits) en los mismos instantes,
+  al 20, 50 y 80 % del más corto. Si los fotogramas no se pueden comparar (casi negros),
+  no se dan por iguales.
+- **Se queda la de más calidad**. Fotos: más resolución (si difieren más de un 5 %; lo
+  que se va a reducir al añadirlo cuenta ya reducido), EXIF de cámara, no WhatsApp, no la
+  enviada (`Sent/`), más peso (+10 %). Vídeos: resolución, no WhatsApp, más bitrate
+  (+10 %), metadatos de cámara. Si empatan, se queda la de la biblioteca.
+  - La de la biblioteca es igual o mejor: la de la colección no se añade.
+  - La de la colección es mejor: entra y la otra va a la **papelera** de la biblioteca
+    (restaurable desde *Limpiar repetidas*, también los vídeos). Si las dos van a la misma
+    carpeta con la misma extensión, la nueva **ocupa el nombre** de la antigua (siguen
+    valiendo favoritos y enlaces) y la antigua va a la papelera como `…_sustituida`; si no,
+    el favorito pasa a la nueva.
+  - Dentro de la propia colección tampoco se repite nada: de varias copias entra la mejor.
+  - Lo igual a una foto que se quitó antes con *Limpiar repetidas* (está en la papelera o
+    su original en `descartadas`) no vuelve.
+- **Sin recomprimir**: lo que entra se copia tal cual si ya está en un formato de la
+  galería; solo se reduce (fotos de más de `--max-lado`) o se convierte (HEIC, TIFF, AVI…
+  a JPEG o MP4) lo que lo necesita, como al importar. El contenido de WhatsApp va a
+  `WhatsApp/`, como siempre.
+- **Incremental**: lo añadido queda en el catálogo con la colección como origen, y lo
+  descartado en `descartes` (motivo `fusion`, con la copia que se queda): una segunda
+  fusión solo mira lo nuevo o lo que ha cambiado. Al terminar se actualiza la galería.
+- **Simulación** (`--simular`): no toca la biblioteca ni la colección; el plan completo va
+  a un CSV en la carpeta temporal del sistema para revisarlo en Excel antes de fusionar.
+  Fuera de simulación, el CSV va a `.exportador/informes/fusion_*.csv`. Acciones:
+  `ANADIDA`, `SUSTITUYE`, `YA_ESTA`, `REPETIDA`, `QUITADA_ANTES`, `ERROR`.
+- La colección **solo se lee**, y no puede estar dentro de la biblioteca ni al revés.
+  Los audios no se fusionan.
 
 ## Pruebas
 

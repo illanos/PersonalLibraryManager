@@ -9,6 +9,7 @@ Uso:
     python main.py todo    <origen> [--destino DEST] [--simular] [--servir] [--sin-audio]
     python main.py galeria <carpeta> [--servir] [--puerto N] [--regenerar] [--caras]
     python main.py reorganizar <biblioteca> [--whatsapp] [--fechas-aproximadas] [--simular]
+    python main.py fusionar <colección> --destino <biblioteca> [--simular]
 
 Ejemplos:
     python main.py todo   "C:\\Users\\Tu\\Pictures\\Movil" --simular
@@ -38,6 +39,13 @@ def _calidad(texto: str) -> int:
     valor = int(texto)
     if not 1 <= valor <= 100:
         raise argparse.ArgumentTypeError("debe estar entre 1 y 100")
+    return valor
+
+
+def _umbral_fusion(texto: str) -> int:
+    valor = int(texto)
+    if not 0 <= valor <= 12:
+        raise argparse.ArgumentTypeError("debe estar entre 0 y 12")
     return valor
 
 
@@ -152,6 +160,34 @@ def construir_parser() -> argparse.ArgumentParser:
     p_reo.add_argument("--simular", action="store_true",
                        help="Muestra qué movería sin tocar nada")
 
+    p_fus = sub.add_parser(
+        "fusionar", help="Añadir a una biblioteca otra colección sin repetir fotos ni vídeos",
+        description="Añade a una biblioteca las fotos y vídeos de otra colección (otra biblioteca "
+                    "del exportador o cualquier carpeta). Compara por días: lo que ya está no se "
+                    "añade y, de dos copias iguales, se queda la de más calidad; la peor va a la "
+                    "papelera de la biblioteca (restaurable). La colección solo se lee.")
+    p_fus.add_argument("coleccion", type=Path, help="Colección a añadir (solo se lee)")
+    p_fus.add_argument("--destino", type=Path, required=True,
+                       help="Biblioteca a la que se añade (debe existir)")
+    p_fus.add_argument("--simular", action="store_true",
+                       help="Muestra qué haría sin tocar nada (el informe CSV va a la carpeta "
+                            "temporal del sistema)")
+    p_fus.add_argument("--umbral", type=_umbral_fusion, default=5,
+                       help="Bits de diferencia (0-12, de 128) para considerar dos fotos la misma "
+                            "(por defecto 5: copias recomprimidas o reducidas). Más = más agresivo")
+    p_fus.add_argument("--margen-dias", type=_positivo, default=1,
+                       help="Días antes y después con los que se compara cada foto o vídeo "
+                            "(por defecto 1, por medianoche y zonas horarias; 0 = el mismo día)")
+    p_fus.add_argument("--max-lado", dest="max_lado_fotos", type=_positivo, default=3200,
+                       help="Las fotos más grandes se reducen al añadirlas, como al importar "
+                            "(0 = copiarlas siempre tal cual; por defecto 3200)")
+    p_fus.add_argument("--calidad", type=_calidad, default=88,
+                       help="Calidad al reducir o convertir una foto (por defecto 88)")
+    p_fus.add_argument("--hilos", type=_positivo, default=0,
+                       help="Archivos en paralelo (por defecto: según los núcleos del equipo)")
+    p_fus.add_argument("--sin-galeria", action="store_true",
+                       help="No actualizar la galería de la biblioteca al terminar")
+
     p_gal = sub.add_parser("galeria", parents=[servir],
                            help="Generar (y servir) la galería web local")
     p_gal.add_argument("carpeta", type=Path, help="Biblioteca ya organizada")
@@ -234,6 +270,23 @@ def main(argv=None):
         from reorganizar import reorganizar
         reorganizar(biblioteca, args.simular, whatsapp=args.whatsapp,
                     fechas=args.fechas_aproximadas, pegatinas_aparte=args.pegatinas_aparte)
+        return
+
+    if args.comando == "fusionar":
+        coleccion, destino = args.coleccion.resolve(), args.destino.resolve()
+        if not coleccion.is_dir():
+            sys.exit(f"La colección no existe: {coleccion}")
+        if not destino.is_dir():
+            sys.exit(f"La biblioteca no existe: {destino}")
+        if coleccion == destino or coleccion in destino.parents or destino in coleccion.parents:
+            sys.exit("La colección y la biblioteca deben ser carpetas distintas y ninguna "
+                     "dentro de la otra.")
+        if not hay_pillow():
+            sys.exit(MENSAJE_PILLOW)
+        from fusionar import OpcionesFusion, fusionar
+        fusionar(coleccion, destino, args.simular, OpcionesFusion(
+            umbral=args.umbral, margen_dias=args.margen_dias, max_lado=args.max_lado_fotos,
+            calidad=args.calidad, hilos=args.hilos, galeria=not args.sin_galeria))
         return
 
     if args.comando == "galeria":

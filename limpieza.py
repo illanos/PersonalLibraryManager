@@ -29,14 +29,19 @@ from pathlib import Path, PurePosixPath
 
 from catalogo import ESQUEMA, Catalogo, ESPERA_BLOQUEO, ruta_catalogo
 from clasificacion import es_whatsapp
+from fotos import EXTENSIONES_FOTO as FOTOS_IMPORTABLES
 from media_utils import CARPETA_INTERNA, CARPETAS_EXCLUIDAS, hash_archivo
 from similares import UMBRAL, agrupar
+from videos import EXTENSIONES_VIDEO
 
 CARPETA_PAPELERA = "papelera"                 # dentro de .exportador/
 ARCHIVO_DECISIONES = "limpieza.json"          # dentro de .exportador/
 UMBRAL_MAX = 24                               # bits (de 128) como máximo en el ajuste
 TOLERANCIA_RESOLUCION = 0.05                  # ±5 % de píxeles cuenta como la misma resolución
 EXTENSIONES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"}   # las de la galería
+# A la papelera también van vídeos y cualquier formato que se importe: la peor de dos
+# copias al fusionar otra colección (fusionar.py), aunque no sea de la galería
+EXTENSIONES_PAPELERA = EXTENSIONES | FOTOS_IMPORTABLES | EXTENSIONES_VIDEO
 CONFIRMAR_VACIADO = "VACIAR"
 _RE_SENT = re.compile(r"(^|[\\/])sent([\\/]|$)", re.IGNORECASE)
 
@@ -184,8 +189,11 @@ class Limpieza:
 
     # --- validación de rutas ---
 
-    def validar(self, src, existir: bool = True) -> Path:
-        """Ruta absoluta de una foto de la biblioteca o RutaNoValida."""
+    def validar(self, src, existir: bool = True, extensiones=EXTENSIONES) -> Path:
+        """Ruta absoluta de una foto de la biblioteca o RutaNoValida.
+
+        Con `extensiones=EXTENSIONES_PAPELERA` admite también vídeos y los demás
+        formatos que se importan (papelera)."""
         if not isinstance(src, str) or not src or len(src) > 1024 or "\x00" in src:
             raise RutaNoValida("ruta vacía o no válida")
         if "\\" in src or ":" in src or src.startswith("/"):
@@ -195,8 +203,9 @@ class Limpieza:
             raise RutaNoValida(f"ruta con '..' o tramos vacíos: {src}")
         if partes[0] in CARPETAS_EXCLUIDAS or any(p.startswith(".") for p in partes):
             raise RutaNoValida(f"carpeta interna: {src}")
-        if PurePosixPath(src).suffix.lower() not in EXTENSIONES:
-            raise RutaNoValida(f"no es una foto: {src}")
+        if PurePosixPath(src).suffix.lower() not in extensiones:
+            tipo = "una foto" if extensiones == EXTENSIONES else "una foto ni un vídeo"
+            raise RutaNoValida(f"no es {tipo}: {src}")
         ruta = (self.biblioteca / src).resolve()
         if not ruta.is_relative_to(self.biblioteca) or ruta == self.biblioteca:
             raise RutaNoValida(f"fuera de la biblioteca: {src}")
@@ -375,6 +384,19 @@ class Limpieza:
 
     # --- papelera ---
 
+    def mover_a_papelera(self, src: str, decision: str, elemento: dict = None) -> int:
+        """Mueve a la papelera una foto o un vídeo suelto de la biblioteca (lo usa
+        fusionar.py con la peor de dos copias) y anota su contenido en `descartadas`.
+
+        Se restaura como lo demás. No toca galeria.json: quien llama lo actualiza.
+        Devuelve los bytes movidos.
+        """
+        with self.lock, self._db() as db:
+            ruta = self.validar(src, extensiones=EXTENSIONES_PAPELERA)
+            self._no_es_origen(db, [ruta])
+            info = db.execute("SELECT * FROM archivos WHERE destino = ?", (src,)).fetchone()
+            return self._mover_a_papelera(db, src, ruta, info, elemento, decision)
+
     def _ruta_en_papelera(self, rel: str) -> Path:
         destino = self.papelera / rel
         n = 1
@@ -428,7 +450,7 @@ class Limpieza:
         if srcs is not None:
             srcs = _lista_rutas(srcs, "srcs")
             for s in srcs:
-                self.validar(s, existir=False)
+                self.validar(s, existir=False, extensiones=EXTENSIONES_PAPELERA)
         with self.lock:
             restauradas = self._restaurar(srcs)
             self._olvidar_decisiones_de(restauradas)
@@ -450,7 +472,7 @@ class Limpieza:
                 if not en_papelera.is_file():
                     db.execute("DELETE FROM papelera WHERE src = ?", (src,))
                     continue
-                destino = self.validar(src, existir=False)
+                destino = self.validar(src, existir=False, extensiones=EXTENSIONES_PAPELERA)
                 if destino.exists():   # ocupada por una importación posterior: otro nombre
                     destino = _nombre_libre(destino)
                     nuevo = destino.relative_to(self.biblioteca).as_posix()
@@ -568,16 +590,21 @@ def _nombre_libre(ruta: Path) -> Path:
 
 
 def _miniatura_si_falta(biblioteca: Path, ruta: Path, elemento: dict):
-    from galeria import _clave, _miniatura_foto
+    from galeria import _clave, _miniatura_foto, _miniatura_video
     rel = ruta.relative_to(biblioteca).as_posix()
     thumb_rel = elemento.get("thumb") or ""
     if thumb_rel and (biblioteca / thumb_rel).is_file() and rel == elemento["src"]:
         return
     from media_utils import CARPETA_GALERIA
     thumb_rel = f"{CARPETA_GALERIA}/thumbs/{_clave(rel)}.jpg"
+    thumb = biblioteca / thumb_rel
     try:
-        (biblioteca / thumb_rel).parent.mkdir(parents=True, exist_ok=True)
-        _miniatura_foto(ruta, biblioteca / thumb_rel)
-        elemento["thumb"] = thumb_rel
+        thumb.parent.mkdir(parents=True, exist_ok=True)
+        if ruta.suffix.lower() in EXTENSIONES_VIDEO:
+            if shutil.which("ffmpeg"):
+                _miniatura_video(ruta, thumb, elemento.get("duracion", 0))
+        else:
+            _miniatura_foto(ruta, thumb)
+        elemento["thumb"] = thumb_rel if thumb.is_file() else ""
     except Exception:
         elemento["thumb"] = ""
