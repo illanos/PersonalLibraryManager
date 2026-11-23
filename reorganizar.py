@@ -21,7 +21,7 @@ from pathlib import Path, PurePath
 
 from catalogo import Catalogo, ruta_catalogo
 from clasificacion import carpeta_destino, categoria, en_carpeta_whatsapp
-from media_utils import CARPETA_GALERIA, fecha_aproximada, imprimir, nombre_libre
+from media_utils import CARPETA_GALERIA, fecha_aproximada, imprimir, nombre_libre, progreso
 
 _RE_SIN_HORA = "_000000"
 
@@ -94,8 +94,11 @@ def reorganizar(biblioteca: Path, simular: bool = False, whatsapp: bool = False,
     print(f"\n{'SIMULACIÓN' if simular else 'REORGANIZANDO'} — {biblioteca}\n")
     reservados = set()
     with Catalogo(biblioteca, simular) as catalogo:
-        for fila in sorted(catalogo.filas(), key=lambda f: f["destino"]):
+        filas = sorted(catalogo.filas(), key=lambda f: f["destino"])
+        for n, fila in enumerate(filas, 1):
             rel = fila["destino"]
+            progreso("avance", "reorganizar", paso="Revisando", hecho=n, total=len(filas),
+                     archivo=rel)
             if not (biblioteca / rel).exists():
                 continue
             nuevo = plan(biblioteca, fila, whatsapp, fechas, pegatinas_aparte, reservados)

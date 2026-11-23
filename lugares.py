@@ -62,7 +62,10 @@ def preparar(origen_zip: bytes, admin1: str, paises: str) -> list:
 
 
 def descargar_lugares():
-    """Descarga GeoNames una vez y deja `datos/lugares.tsv`."""
+    """Descarga GeoNames una vez y deja `datos/lugares.tsv` (si ya está, no hace nada)."""
+    if ARCHIVO.exists():
+        print(f"Lugares ya descargados en {ARCHIVO} (bórralo para volver a descargarlos).")
+        return
     print("Descargando ciudades de GeoNames (CC BY 4.0) para mostrar lugares sin conexión:")
     tmp = CARPETA_DATOS / "_geonames"
     archivos = {n: descargar(URL_BASE + n, tmp / n)

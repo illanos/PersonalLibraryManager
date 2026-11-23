@@ -79,7 +79,7 @@ class Procesamiento(CasoConCarpeta):
         self.lock = threading.Lock()
 
     def codificar(self, falla_hw=False):
-        def ejecutar(cmd, duracion=0, etiqueta=""):
+        def ejecutar(cmd, duracion=0, etiqueta="", video=""):
             with self.lock:
                 self.comandos.append(cmd)
                 self.simultaneos += 1

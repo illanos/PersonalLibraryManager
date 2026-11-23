@@ -18,7 +18,7 @@ from clasificacion import carpeta_destino, categoria
 from danados import ILEGIBLE, RegistroDanados, diagnosticar, problema_de_excepcion
 from media_utils import (
     NOMBRE_ORIGINALES, copiar_atomico, fecha_desde_nombre, fecha_mtime, fecha_y_nombre, hash_archivo,
-    imprimir, imprimir_resumen, listar_archivos, nombre_libre, nuevas_estadisticas,
+    imprimir, imprimir_resumen, listar_archivos, nombre_libre, nuevas_estadisticas, progreso,
     ruta_temporal, subcarpeta_fecha,
 )
 from metadatos import leer_metadatos, parametros_guardado
@@ -301,7 +301,11 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
             ThreadPoolExecutor(hilos) as pool:
         try:
             # Fase 1: análisis en paralelo
-            tareas = list(pool.map(lambda r: _analizar(r, catalogo, origen), archivos))
+            tareas = []
+            for n, t in enumerate(pool.map(lambda r: _analizar(r, catalogo, origen), archivos), 1):
+                tareas.append(t)
+                progreso("avance", "fotos", paso="Analizando", hecho=n, total=len(archivos),
+                         archivo=t.ruta.relative_to(origen).as_posix())
 
             # Fase 2: duplicados y nombres, en orden cronológico (ráfagas -> _01, _02...)
             reservados, vistos, pendientes, omitidas = set(), {}, [], []
@@ -368,6 +372,8 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
                 stats["parecidas_omitidas"] += 1
 
             # Fase 3: escritura en paralelo
+            if pendientes:
+                progreso("avance", "fotos", paso="Guardando", hecho=0, total=len(pendientes))
             futuros = {pool.submit(_ejecutar, t, opciones, mismo_formato): t
                        for t in pendientes}
             for n, futuro in enumerate(as_completed(futuros), 1):
@@ -375,6 +381,8 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
                 rel = t.ruta.relative_to(origen)
                 destino_rel = t.destino.relative_to(destino).as_posix()
                 prefijo = f"  [{n}/{len(pendientes)}]"
+                progreso("avance", "fotos", paso="Guardando", hecho=n, total=len(pendientes),
+                         archivo=rel.as_posix())
                 try:
                     accion = futuro.result()
                 except Exception as exc:

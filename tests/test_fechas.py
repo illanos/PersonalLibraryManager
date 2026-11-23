@@ -74,7 +74,7 @@ class Importacion(CasoConCarpeta):
         video.write_bytes(CONTENIDO)
         poner_mtime(video, datetime(2026, 4, 1))
 
-        def codificar(cmd, duracion=0, etiqueta=""):
+        def codificar(cmd, duracion=0, etiqueta="", video=""):
             Path(cmd[-1]).write_bytes(b"x" * 100)
             return True, ""
         with mock.patch("videos.sondear", return_value=None), \

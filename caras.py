@@ -26,7 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from descargas import CARPETA_DATOS, descargar
-from media_utils import CARPETA_GALERIA
+from media_utils import CARPETA_GALERIA, progreso
 
 CARPETA_MODELOS = CARPETA_DATOS / "modelos"
 URL_ZOO = "https://github.com/opencv/opencv_zoo/raw/main/models/"
@@ -271,6 +271,8 @@ class Caras:
 
         with ThreadPoolExecutor(max(1, hilos)) as pool:
             for n, (e, caras) in enumerate(pool.map(detectar, pendientes), 1):
+                progreso("avance", "galeria", paso="Caras", hecho=n, total=len(pendientes),
+                         archivo=e["src"])
                 self.db.execute("DELETE FROM caras WHERE src = ?", (e["src"],))
                 if isinstance(caras, Exception):
                     print(f"  caras omitidas en {e['src']}: {caras}")
