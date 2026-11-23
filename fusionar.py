@@ -65,7 +65,7 @@ from videos import EXTENSIONES_VIDEO, OpcionesVideos, comando_codificacion, dete
 UMBRAL_MAX = UMBRAL                 # más de 12 bits ya no son copias, sino fotos distintas
 TOLERANCIA_RESOLUCION = 0.05        # ±5 % de píxeles cuenta como la misma resolución
 MARGEN_PESO = 0.10                  # pesar un 10 % más (misma resolución) = menos comprimida
-SEGUNDOS_EXIF = 2                   # dos fechas EXIF más separadas = otra toma, no una copia
+SEGUNDOS_EXIF = 0                   # dos fechas EXIF distintas = otra toma (ráfaga), no una copia
 DURACION_SEGUNDOS, DURACION_RELATIVA = 1.0, 0.02   # vídeos iguales: ±1 s o ±2 % de duración
 INSTANTES_VIDEO = (0.2, 0.5, 0.8)   # fotogramas que se comparan (fracción de la duración)
 UMBRAL_VIDEO = 8                    # bits (de 128) como máximo en cada fotograma
@@ -104,6 +104,7 @@ class Elemento:
     whatsapp: bool = False
     sent: bool = False
     hash_original: str = None       # MD5 del original según su catálogo
+    nombre_original: str = ""       # nombre (sin extensión, en minúsculas) del archivo original
     animado: bool = False
     st: os.stat_result = None
     marcos: dict = field(default_factory=dict)   # vídeos: instante -> dHash del fotograma
@@ -287,9 +288,22 @@ def _identicos(a: Elemento, b: Elemento) -> bool:
 
 
 def _otra_toma(a: Elemento, b: Elemento) -> bool:
-    """Las dos tienen fecha EXIF y no es la misma: otra toma (ráfaga), no una copia."""
+    """Las dos tienen fecha EXIF y no es la misma: otra toma (ráfaga), no una copia.
+    (Las tomas de una ráfaga se separan 1 s y su dHash puede diferir solo 1-2 bits.)"""
     return (a.fuente == "exif" and b.fuente == "exif"
             and abs((a.fecha - b.fecha).total_seconds()) > SEGUNDOS_EXIF)
+
+
+def _mismo_nombre_y_hora(a: Elemento, b: Elemento) -> bool:
+    """Mismo archivo original (por nombre) y misma hora de captura: la misma foto o vídeo
+    aunque cada colección lo haya reducido o recomprimido a su manera (su dHash puede
+    diferir hasta ~10 bits). Como comprobación, que se parezcan (≤ 12 bits) o, en vídeos,
+    que duren lo mismo."""
+    if not a.nombre_original or a.nombre_original != b.nombre_original or a.fecha != b.fecha:
+        return False
+    if a.tipo == "video":
+        return _duraciones_compatibles(a.duracion, b.duracion)
+    return bool(a.dhash and b.dhash and distancia(a.dhash, b.dhash) <= UMBRAL)
 
 
 def buscar_pareja(c: Elemento, indice: Indice, umbral: int = UMBRAL_COPIA) -> tuple:
@@ -302,6 +316,8 @@ def buscar_pareja(c: Elemento, indice: Indice, umbral: int = UMBRAL_COPIA) -> tu
     for e in indice.candidatos(c):
         if not _proporciones_compatibles(c.proporcion, e.proporcion):
             continue
+        if _mismo_nombre_y_hora(c, e):
+            return e, "mismo original (nombre y hora)"
         if c.tipo == "video" and not _duraciones_compatibles(c.duracion, e.duracion):
             continue
         if _identicos(c, e):
@@ -427,6 +443,7 @@ def leer_elemento(ruta: Path, carpeta: Path, lado: str, fila=None, previo: dict 
     fila = dict(fila) if fila else {}
     origen = fila.get("origen") or ""
     e.hash_original = fila.get("hash")
+    e.nombre_original = (Path(origen).stem if origen else ruta.stem).lower()
     e.fecha, e.fuente = _fecha_iso(fila.get("fecha")), fila.get("fuente_fecha") or ""
     if not e.fecha:
         e.fuente = ""
@@ -434,7 +451,9 @@ def leer_elemento(ruta: Path, carpeta: Path, lado: str, fila=None, previo: dict 
     if (previo and previo.get("tipo") == tipo and previo.get("bytes") == st.st_size
             and previo.get("mtime") == int(st.st_mtime)):
         e.ancho, e.alto = int(previo.get("ancho") or 0), int(previo.get("alto") or 0)
-        e.dhash = previo.get("dhash") or fila.get("phash")
+        # El del catálogo sale del original, como el de otra biblioteca: se parecen más
+        # entre sí que con el de la galería, que sale de la miniatura
+        e.dhash = fila.get("phash") or previo.get("dhash")
         e.duracion = float(previo.get("duracion") or 0)
         e.camara = bool(previo.get("camara"))
         e.whatsapp = previo.get("ambito") == "whatsapp"
@@ -518,7 +537,8 @@ def _leer_papelera(biblioteca: Path) -> tuple:
             fecha=fecha, fuente=datos.get("fuente_fecha") or "",
             ancho=int(datos.get("ancho") or 0), alto=int(datos.get("alto") or 0),
             bytes=int(datos.get("bytes") or 0), dhash=datos.get("dhash"),
-            duracion=float(datos.get("duracion") or 0), hash_original=digest))
+            duracion=float(datos.get("duracion") or 0), hash_original=digest,
+            nombre_original=Path(datos.get("nombre_original") or src).stem.lower()))
     return elementos, descartadas
 
 

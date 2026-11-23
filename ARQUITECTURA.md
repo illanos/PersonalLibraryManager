@@ -303,12 +303,18 @@ o cualquier carpeta— sin repetir lo que ya tiene. Lógica en `fusionar.py`.
   del mismo día, ± `--margen-dias` (1 por defecto: fotos de cerca de medianoche o con la
   fecha en otra zona horaria). La fecha es la del catálogo de cada una (la de captura) y,
   si no hay catálogo, la de la galería o la del archivo.
-- **Fotos iguales**: dHash a `--umbral` bits o menos (5 por defecto, lo que separa una foto
-  de su copia recomprimida, reducida o reenviada), proporción compatible y, si las dos
-  tienen fecha EXIF, la misma: otra toma de una ráfaga se parece mucho pero no es una
-  copia, así que se añade (el resumen la cuenta como *parecida*, para revisarla luego en
-  *Limpiar repetidas*). También son iguales las que vienen del mismo original (mismo MD5
-  en los dos catálogos) y los archivos idénticos.
+- **Mismo original**: si el archivo original tiene el mismo nombre y la misma hora de
+  captura (p. ej. `IMG_20160221_115858.jpg` importado del móvil en una y del Takeout en
+  la otra), es la misma foto o vídeo aunque cada biblioteca lo haya reducido a su manera
+  (su dHash llega a diferir ~10 bits; se exige ≤ 12 como comprobación). También si el
+  original tiene el mismo MD5 en los dos catálogos, o los archivos son idénticos.
+- **Fotos iguales**, si no: dHash a `--umbral` bits o menos (5 por defecto, lo que separa
+  una foto de su copia recomprimida, reducida o reenviada), proporción compatible y, si
+  las dos tienen fecha EXIF, exactamente la misma: las tomas de una ráfaga se separan un
+  segundo y su dHash puede diferir solo 1-2 bits, pero no son copias, así que se añaden
+  (el resumen las cuenta como *parecidas*, para revisarlas luego en *Limpiar repetidas*).
+  Se usa el dHash del catálogo (calculado del original) antes que el de la galería (de la
+  miniatura), que casa peor con el de otra biblioteca.
 - **Vídeos iguales** (requiere FFmpeg; sin él se omiten): duración casi igual (±1 s o
   ±2 %), proporción compatible y fotogramas parecidos (≤ 8 bits) en los mismos instantes,
   al 20, 50 y 80 % del más corto. Si los fotogramas no se pueden comparar (casi negros),

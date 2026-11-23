@@ -103,6 +103,26 @@ class Plan(unittest.TestCase):
         self.assertEqual(rafaga.accion, "anadir")
         self.assertEqual(rafaga.parecida[1], 0)   # muy parecida, pero es otra toma
 
+    def test_mismo_original_por_nombre_y_hora_aunque_el_hash_difiera(self):
+        # Cada biblioteca redujo y recomprimió el original a su manera: 10 bits
+        bib = [foto("bib.jpg", dhash="f0" * 16, fuente="exif", nombre_original="img_20240512_100000")]
+        c = foto("c.jpg", "c", ancho=600, alto=450, dhash="0f" + "f0" * 14 + "f3",
+                 fuente="exif", nombre_original="img_20240512_100000")
+        planificar([c], bib)
+        self.assertEqual((c.accion, c.como), ("ya_esta", "mismo original (nombre y hora)"))
+        # Mismo nombre pero otra foto (más de 12 bits) u otra hora: no
+        otra = foto("d.jpg", "c", dhash="0f" * 16, fuente="exif",
+                    nombre_original="img_20240512_100000")
+        planificar([otra], bib)
+        self.assertEqual(otra.accion, "anadir")
+
+    def test_un_segundo_de_diferencia_en_el_exif_es_otra_toma(self):
+        bib = [foto("bib.jpg", dhash="f0" * 16, fuente="exif")]
+        c = foto("c.jpg", "c", dhash="f0" * 15 + "f1", fuente="exif",
+                 fecha=datetime(2024, 5, 12, 10, 0, 1))
+        planificar([c], bib)
+        self.assertEqual((c.accion, c.parecida[1]), ("anadir", 1))
+
     def test_margen_de_dias(self):
         bib = [foto("bib.jpg", dhash="f0" * 16)]
         manana = foto("c.jpg", "c", ancho=600, alto=450, dhash="f0" * 16,
