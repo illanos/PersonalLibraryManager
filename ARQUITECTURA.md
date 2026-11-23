@@ -173,6 +173,12 @@ Biblioteca/
   WhatsApp `IMG-20240512-WA0001`, `PTT-20240512-WA0001`, capturas…) y, en último caso, de la
   fecha del archivo. El informe y `--simular` dicen de dónde salió cada fecha; en la galería,
   las que vienen del archivo se marcan como *Fecha dudosa*.
+- **Vídeos con la fecha de la cámara en el nombre** (`VID_20160812_203028`): si los metadatos
+  se alejan más de 10 minutos, manda el nombre y el vídeo exportado lleva esa fecha en
+  `creation_time`. En un Takeout real, 105 de 400 vídeos traían en los metadatos la fecha en
+  que se volvieron a procesar (siempre posterior, de 20 minutos a 3 días); los demás
+  coincidían con el nombre a menos de 10 minutos. Los `PXL_…` de Pixel no cuentan: su nombre
+  va en UTC.
 - **Fechas aproximadas**: si la fecha sale de un nombre *sin hora* (WhatsApp), se usa la hora
   de modificación del archivo cuando es del mismo día (etiqueta *Hora aproximada*); si no, el
   nombre lo dice claramente, `20260121_WA0011`, en vez de inventar `20260121_000000_18`. Solo
@@ -200,6 +206,11 @@ Biblioteca/
 - **Escritura atómica**: todo se escribe primero como `.part` y se renombra al final. Si se
   interrumpe (Ctrl+C, apagón), no quedan archivos a medias y basta con volver a ejecutar.
 - **Si recomprimir no compensa** (la salida pesaría más) se conserva el original tal cual.
+- **Nunca más calidad que la del original**: la de un JPEG se estima por su tabla de
+  cuantización (como la escala libjpeg) y se recomprime como mucho a esa (`--calidad` es el
+  máximo). Subirla no recupera detalle y solo engorda: en un Takeout de Google Fotos, con fotos
+  ya recomprimidas por Google a calidad 66-79, el 22 % salía más grande que el original aun
+  reduciéndolas a 3200 px; así pesan un 25 % menos (y las demás, un 7 % menos).
 - **Vídeos**: primero se analiza todo en orden (nombres sin carreras) y luego se codifican
   `--hilos-video` a la vez; con Ctrl+C se matan todos los FFmpeg en marcha. `--hw` detecta los
   codificadores del FFmpeg instalado y prueba un fotograma para comprobar que la GPU
@@ -238,6 +249,9 @@ se copian: su contenido queda dentro de las fotos y vídeos.
   en `Fotos del AAAA` y en cada álbum (a veces el álbum solo trae el JSON): se reconoce por
   título + fecha de captura y se importa una sola vez (MD5) con los álbumes y personas de todas
   sus copias. Se ignoran los álbumes sin nombre útil (`Sin título`, fechas como `07/04/13`).
+  A veces la copia de un álbum es otra versión, recomprimida o más pequeña (no es idéntica):
+  con `--omitir-parecidas` no se importa y sus álbumes y personas pasan a la que queda (en un
+  Takeout real, 820 fotos y 455 MB; la página «Limpiar repetidas» permite revisarlas después).
 - **Versiones editadas** (`foto-editada.jpg`): se importa solo el original y la editada queda
   en el informe como `OMITIDA`; si el original no está, se importa la editada.
 - **Fotos con movimiento** (`PXL_….MP.jpg` + `PXL_….MP`): la foto se recomprime como
@@ -250,6 +264,9 @@ se copian: su contenido queda dentro de las fotos y vídeos.
   se reescriben solo los segmentos EXIF/XMP (píxeles, ICC, IPTC y lo que va tras la imagen,
   intactos) y los MP4/MOV se remultiplexan con `-c copy`.
 - Los GIF animados y las pegatinas se copian tal cual: no reciben metadatos.
+- **Si se mueve el Takeout** entre dos ejecuciones, basta con lanzar el comando con la ruta
+  nueva: lo ya importado se reconoce por su contenido (MD5) y no se repite; solo tarda más la
+  primera comprobación, porque hay que volver a leer los archivos.
 
 ## Metadatos
 

@@ -73,6 +73,31 @@ def obtener_fecha(ruta: Path):
 
 # ----------------------------- Optimización -----------------------------
 
+# Tabla de cuantización de luminancia de referencia de libjpeg (calidad 50)
+_LUMINANCIA_IJG = (16, 11, 10, 16, 24, 40, 51, 61, 12, 12, 14, 19, 26, 58, 60, 55,
+                   14, 13, 16, 24, 40, 57, 69, 56, 14, 17, 22, 29, 51, 87, 80, 62,
+                   18, 22, 37, 56, 68, 109, 103, 77, 24, 35, 55, 64, 81, 104, 113, 92,
+                   49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100, 103, 99)
+CALIDAD_MINIMA_ESTIMADA = 50   # por debajo, una tabla propia de cámara puede engañar
+
+
+def calidad_jpeg(im):
+    """Calidad (1-100) con la que se guardó un JPEG, estimada por su tabla de luminancia
+    como hace libjpeg al escalarla; None si no es JPEG.
+
+    Recomprimir a más calidad que la del original no recupera detalle y solo engorda el
+    archivo: en un Takeout de Google Fotos (fotos ya recomprimidas por Google a calidad
+    66-79), el 22 % salía más grande que el original aun reduciéndolas a 3200 px.
+    """
+    tablas = getattr(im, "quantization", None)
+    if im.format not in ("JPEG", "MPO") or not tablas or 0 not in tablas:
+        return None
+    escala = sum(tablas[0]) * 100 / sum(_LUMINANCIA_IJG)
+    if escala <= 0:
+        return None
+    calidad = 5000 / escala if escala > 100 else (200 - escala) / 2
+    return max(CALIDAD_MINIMA_ESTIMADA, min(100, round(calidad)))
+
 def guardar_optimizada(ruta: Path, destino: Path, opciones: OpcionesFotos = None,
                        extra: MetadatosExtra = None) -> list:
     """Escribe en `destino` la versión reducida y recomprimida (de forma atómica).
@@ -86,6 +111,7 @@ def guardar_optimizada(ruta: Path, destino: Path, opciones: OpcionesFotos = None
     avisos = []
 
     with Image.open(ruta) as original:
+        calidad_original = calidad_jpeg(original) if formato_pil == "JPEG" else None
         im = ImageOps.exif_transpose(original)   # aplica la rotación EXIF
         kwargs = parametros_guardado(original, im, formato_pil, avisos, extra)
 
@@ -105,7 +131,8 @@ def guardar_optimizada(ruta: Path, destino: Path, opciones: OpcionesFotos = None
     elif im.mode not in ("RGB", "L"):
         im = im.convert("RGB")
 
-    kwargs["quality"] = opciones.calidad
+    # Nunca más calidad que la del original: no recupera nada y solo engorda el archivo
+    kwargs["quality"] = min(opciones.calidad, calidad_original or 100)
     if formato_pil == "JPEG":
         kwargs.update(optimize=True, progressive=True)
 
@@ -241,9 +268,17 @@ def _combinar_copias(tareas: list):
         if t.estado != "pendiente" or not t.hash:
             continue
         primera = primeras.setdefault(t.hash, t)
-        if primera is not t and t.extra is not None:
-            primera.extra = (replace(t.extra, fecha=None, zona="") if primera.extra is None
-                             else primera.extra.combinar(t.extra))
+        if primera is not t:
+            _heredar_extra(primera, t)
+
+
+def _heredar_extra(queda: _Tarea, descartada: _Tarea):
+    """`queda` (la copia que se importa) se lleva los álbumes, personas… de `descartada`.
+    La fecha no: ya se eligió con el archivo que se importa."""
+    if descartada.extra is None:
+        return
+    queda.extra = (replace(descartada.extra, fecha=None, zona="") if queda.extra is None
+                   else queda.extra.combinar(descartada.extra))
 
 
 def _copiar_sin_recomprimir(t: _Tarea) -> bool:
@@ -437,6 +472,8 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
                                    detalle="peor copia de un grupo de parecidas",
                                    referencia=ref)
                 stats["parecidas_omitidas"] += 1
+                if isinstance(t.mejor, _Tarea):   # sus álbumes y personas, a la que queda
+                    _heredar_extra(t.mejor, t)
 
             # Fase 3: escritura en paralelo
             if pendientes:

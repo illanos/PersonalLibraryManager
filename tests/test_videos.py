@@ -127,5 +127,44 @@ class Procesamiento(CasoConCarpeta):
         self.assertEqual((stats["procesados"], stats["ya_importados"]), (0, 1))
 
 
+class FechaDelNombre(CasoConCarpeta):
+    """Datos reales: los metadatos de 105 de 400 vídeos eran de un reprocesado posterior."""
+
+    def test_nombre_de_camara_corrige_metadatos_de_un_reprocesado(self):
+        info = {"fecha": datetime(2016, 8, 16, 3, 33, 54)}
+        self.assertEqual(videos.fecha_video(Path("VID_20160812_203028.mp4"), info),
+                         (datetime(2016, 8, 12, 20, 30, 28), "nombre"))
+
+    def test_pocos_minutos_de_diferencia_mandan_los_metadatos(self):
+        info = {"fecha": datetime(2016, 8, 12, 20, 36, 2)}   # p. ej. hora de fin de grabación
+        self.assertEqual(videos.fecha_video(Path("VID_20160812_203028.mp4"), info),
+                         (info["fecha"], "metadatos"))
+
+    def test_sin_hora_en_el_nombre_o_en_utc_mandan_los_metadatos(self):
+        info = {"fecha": datetime(2025, 3, 2, 12, 19, 37)}
+        for nombre in ("PXL_20250302_111937317.mp4",   # Pixel: nombre en UTC
+                       "VID-20250301-WA0001.mp4"):       # WhatsApp: solo el día
+            self.assertEqual(videos.fecha_video(Path(nombre), info), (info["fecha"], "metadatos"))
+
+    def test_el_video_exportado_lleva_la_fecha_corregida(self):
+        from datetime import timezone
+        origen = self.dir / "movil"
+        origen.mkdir()
+        (origen / "VID_20160812_203028.mp4").write_bytes(CONTENIDO)
+        comandos = []
+
+        def codificar(cmd, duracion=0, etiqueta="", video=""):
+            comandos.append(cmd)
+            Path(cmd[-1]).write_bytes(b"x" * 100)
+            return True, ""
+        info = {"fecha": datetime(2016, 8, 16, 3, 33, 54), "duracion": 5.0}
+        with mock.patch("videos.sondear", return_value=info), \
+                mock.patch("videos.ejecutar_ffmpeg", side_effect=codificar):
+            videos.procesar_videos(origen, self.dir / "bib", False, videos.OpcionesVideos())
+        self.assertTrue((self.dir / "bib/2016/08-Agosto/20160812_203028.mp4").exists())
+        utc = datetime(2016, 8, 12, 20, 30, 28).astimezone(timezone.utc)
+        self.assertIn(f"creation_time={utc:%Y-%m-%dT%H:%M:%S}Z", comandos[0])
+
+
 if __name__ == "__main__":
     unittest.main()

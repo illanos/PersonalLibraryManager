@@ -14,7 +14,7 @@ import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
-from datetime import timezone
+from datetime import timedelta, timezone
 from pathlib import Path
 
 from catalogo import Catalogo, Informe
@@ -24,8 +24,8 @@ from media_utils import (
     NOMBRE_ORIGINALES, MetadatosExtra, contar_extra, copiar_atomico, elegir_fecha,
     fecha_desde_nombre, fecha_mtime, fecha_y_nombre, formato_bytes, hash_archivo, imprimir,
     imprimir_resumen, listar_archivos, metadatos_para_escribir, nombre_libre,
-    nuevas_estadisticas, parsear_fecha_iso, progreso, resumen_extra, ruta_temporal,
-    subcarpeta_fecha,
+    nombre_tiene_hora, nuevas_estadisticas, parsear_fecha_iso, progreso, resumen_extra,
+    ruta_temporal, subcarpeta_fecha,
 )
 
 EXTENSIONES_VIDEO = {
@@ -173,9 +173,31 @@ def sondear(ruta: Path):
     }
 
 
+# Más que esto entre la fecha del nombre (VID_20160812_203028) y la de los metadatos, y
+# manda el nombre: en un Takeout real, 105 de 400 vídeos traían en los metadatos la fecha
+# en que se volvieron a procesar (siempre posterior: de 20 min a 3 días), no la de grabación
+DESVIO_MAXIMO_NOMBRE = timedelta(minutes=10)
+# Nombres cuya hora no es local: los Pixel nombran PXL_AAAAMMDD_HHMMSSmmm en UTC
+_RE_NOMBRE_EN_UTC = re.compile(r"^PXL_", re.IGNORECASE)
+
+
+def fecha_nombre_camara(ruta: Path):
+    """Fecha *con hora* del nombre que pone la cámara (VID_20160812_203028), o None."""
+    if _RE_NOMBRE_EN_UTC.match(ruta.name) or not nombre_tiene_hora(ruta.stem):
+        return None
+    return fecha_desde_nombre(ruta.stem)
+
+
 def fecha_video(ruta: Path, info: dict = None):
-    """(fecha, fuente): metadatos > nombre del archivo > fecha de modificación."""
+    """(fecha, fuente): metadatos > nombre del archivo > fecha de modificación.
+
+    Excepción: si el nombre trae fecha y hora de la cámara y los metadatos se alejan más
+    de DESVIO_MAXIMO_NOMBRE, manda el nombre (los metadatos son de un reprocesado).
+    """
     if info and info.get("fecha"):
+        del_nombre = fecha_nombre_camara(ruta)
+        if del_nombre and abs(info["fecha"] - del_nombre) > DESVIO_MAXIMO_NOMBRE:
+            return del_nombre, "nombre"
         return info["fecha"], "metadatos"
     fecha = fecha_desde_nombre(ruta.stem)
     if fecha:
@@ -301,6 +323,21 @@ def argumentos_hw(familia: str, codec: str, calidad: int) -> list:
     return args
 
 
+def argumento_fecha(fecha) -> list:
+    """`-metadata creation_time=...` (UTC) para una hora local de este equipo."""
+    utc = fecha.astimezone(timezone.utc)
+    return ["-metadata", f"creation_time={utc:%Y-%m-%dT%H:%M:%S}Z"]
+
+
+def metadatos_del_trabajo(extra: MetadatosExtra, info: dict, fecha, fuente: str) -> list:
+    """Todos los -metadata de un vídeo: los externos y, si el nombre ha corregido la fecha
+    de unos metadatos que no cuadraban (ver fecha_video), la fecha buena."""
+    args = argumentos_metadatos(extra, info)   # sin creation_time: el vídeo ya trae uno
+    if fuente == "nombre" and info.get("fecha"):
+        args += argumento_fecha(fecha)
+    return args
+
+
 def argumentos_metadatos(extra: MetadatosExtra, info: dict) -> list:
     """`-metadata` de FFmpeg con lo que el vídeo no trae: fecha y ubicación solo si le
     faltan; descripción y palabras clave (álbumes y personas) siempre que las haya."""
@@ -308,8 +345,7 @@ def argumentos_metadatos(extra: MetadatosExtra, info: dict) -> list:
         return []
     args = []
     if extra.fecha and not info.get("fecha"):
-        utc = extra.fecha.astimezone(timezone.utc)   # hora local de este equipo -> UTC
-        args += ["-metadata", f"creation_time={utc:%Y-%m-%dT%H:%M:%S}Z"]
+        args += argumento_fecha(extra.fecha)
     if extra.gps and not info.get("gps"):
         lat, lon = extra.gps[:2]
         args += ["-metadata", f"location={lat:+08.4f}{lon:+09.4f}/"]   # ISO 6709
@@ -559,7 +595,8 @@ def procesar_videos(origen: Path, destino: Path, simular: bool,
                         primero.extra = (replace(otro, fecha=None, zona="")
                                          if primero.extra is None
                                          else primero.extra.combinar(otro))
-                        primero.metadatos = argumentos_metadatos(primero.extra, primero.info)
+                        primero.metadatos = metadatos_del_trabajo(
+                            primero.extra, primero.info, primero.fecha, primero.fuente)
                     continue
                 vistos[digest] = rel
 
@@ -586,9 +623,10 @@ def procesar_videos(origen: Path, destino: Path, simular: bool,
                     stats["procesados"] += 1
                     contar_extra(stats, extra, externos)
                     continue
+                metadatos = metadatos_del_trabajo(extra, info, fecha, fuente)
                 trabajos.append(_Trabajo(ruta, rel, st, digest, info, fecha, fuente, base,
                                          carpeta_rel, destino_video, cambio, extra=extra,
-                                         metadatos=argumentos_metadatos(extra, info)))
+                                         metadatos=metadatos))
                 trabajo_de[digest] = trabajos[-1]
             except KeyboardInterrupt:
                 print("\nInterrumpido antes de codificar nada; vuelve a ejecutar para continuar.")

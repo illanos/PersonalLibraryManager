@@ -382,6 +382,29 @@ class ImportacionGoogle(CasoConCarpeta):
         self.assertIn("Editadas (va el original)", self.consola.getvalue())
 
 
+class ParecidasDeGoogle(CasoConCarpeta):
+    def test_la_parecida_que_no_se_importa_deja_sus_albumes_y_personas(self):
+        # La misma foto en dos álbumes; en uno, recomprimida más pequeña
+        from tests.test_similares import escena
+        origen, destino = self.dir / "Google Fotos", self.dir / "biblioteca"
+        fecha = datetime(2012, 8, 10, 22, 7, 25)
+        nombre = "IMG_20120810_220725.jpg"
+        album(origen / "Boda", "Boda")
+        buena = escena(origen / "Boda" / nombre, 3, fecha="2012:08:10 22:07:25")
+        album(origen / "Cena", "Cena")
+        with Image.open(buena) as im:
+            im.resize((600, 450)).save(origen / "Cena" / nombre, quality=60, exif=im.getexif())
+        for carpeta, persona in (("Boda", "Ana"), ("Cena", "Luis")):
+            json_google(origen / carpeta / (nombre + SUFIJO), nombre, fecha, personas=[persona])
+        stats = procesar_fotos(origen, destino, False, OpcionesFotos(
+            externos=IndiceTakeout(origen), omitir_parecidas=True))
+        self.assertEqual((stats["procesados"], stats["parecidas_omitidas"]), (1, 1))
+        datos = leer_metadatos(destino / "2012/08-Agosto/20120810_220725.jpg")
+        self.assertEqual(datos["ancho"], 1200)                    # la mejor copia
+        self.assertEqual(sorted(datos["etiquetas"]), ["Boda", "Cena"])
+        self.assertEqual(sorted(datos["personas"]), ["Ana", "Luis"])
+
+
 class ClipsDeFotosConMovimiento(CasoConCarpeta):
     def setUp(self):
         super().setUp()
