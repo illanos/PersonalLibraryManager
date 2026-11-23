@@ -10,6 +10,8 @@ Uso:
     python main.py google  <takeout/Google Fotos> [--destino DEST] [--simular] [--servir]
     python main.py galeria <carpeta> [--servir] [--puerto N] [--regenerar] [--caras]
     python main.py reorganizar <biblioteca> [--whatsapp] [--fechas-aproximadas] [--simular]
+    python main.py fusionar <colección> --destino <biblioteca> [--simular]
+    python main.py panel   [--puerto N]      (panel web: opciones, ejecución y progreso)
 
 Ejemplos:
     python main.py todo   "C:\\Users\\Tu\\Pictures\\Movil" --simular
@@ -22,10 +24,11 @@ Ejecuta `python main.py <comando> -h` para ver todas las opciones.
 
 import argparse
 import shutil
+import signal
 import sys
 from pathlib import Path
 
-from media_utils import configurar_consola
+from media_utils import configurar_consola, progreso
 
 
 def _positivo(texto: str) -> int:
@@ -39,6 +42,13 @@ def _calidad(texto: str) -> int:
     valor = int(texto)
     if not 1 <= valor <= 100:
         raise argparse.ArgumentTypeError("debe estar entre 1 y 100")
+    return valor
+
+
+def _umbral_fusion(texto: str) -> int:
+    valor = int(texto)
+    if not 0 <= valor <= 12:
+        raise argparse.ArgumentTypeError("debe estar entre 0 y 12")
     return valor
 
 
@@ -166,19 +176,94 @@ def construir_parser() -> argparse.ArgumentParser:
     p_reo.add_argument("--simular", action="store_true",
                        help="Muestra qué movería sin tocar nada")
 
+    p_fus = sub.add_parser(
+        "fusionar", help="Añadir a una biblioteca otra colección sin repetir fotos ni vídeos",
+        description="Añade a una biblioteca las fotos y vídeos de otra colección (otra biblioteca "
+                    "del exportador o cualquier carpeta). Compara por días: lo que ya está no se "
+                    "añade y, de dos copias iguales, se queda la de más calidad; la peor va a la "
+                    "papelera de la biblioteca (restaurable). La colección solo se lee.")
+    p_fus.add_argument("coleccion", type=Path, help="Colección a añadir (solo se lee)")
+    p_fus.add_argument("--destino", type=Path, required=True,
+                       help="Biblioteca a la que se añade (debe existir)")
+    p_fus.add_argument("--simular", action="store_true",
+                       help="Muestra qué haría sin tocar nada (el informe CSV va a la carpeta "
+                            "temporal del sistema)")
+    p_fus.add_argument("--umbral", type=_umbral_fusion, default=5,
+                       help="Bits de diferencia (0-12, de 128) para considerar dos fotos la misma "
+                            "(por defecto 5: copias recomprimidas o reducidas). Más = más agresivo")
+    p_fus.add_argument("--margen-dias", type=_positivo, default=1,
+                       help="Días antes y después con los que se compara cada foto o vídeo "
+                            "(por defecto 1, por medianoche y zonas horarias; 0 = el mismo día)")
+    p_fus.add_argument("--max-lado", dest="max_lado_fotos", type=_positivo, default=3200,
+                       help="Las fotos más grandes se reducen al añadirlas, como al importar "
+                            "(0 = copiarlas siempre tal cual; por defecto 3200)")
+    p_fus.add_argument("--calidad", type=_calidad, default=88,
+                       help="Calidad al reducir o convertir una foto (por defecto 88)")
+    p_fus.add_argument("--hilos", type=_positivo, default=0,
+                       help="Archivos en paralelo (por defecto: según los núcleos del equipo)")
+    p_fus.add_argument("--sin-galeria", action="store_true",
+                       help="No actualizar la galería de la biblioteca al terminar")
+
     p_gal = sub.add_parser("galeria", parents=[servir],
                            help="Generar (y servir) la galería web local")
     p_gal.add_argument("carpeta", type=Path, help="Biblioteca ya organizada")
     p_gal.add_argument("--regenerar", action="store_true",
                        help="Rehacer metadatos y miniaturas aunque no hayan cambiado")
+
+    p_panel = sub.add_parser(
+        "panel", help="Panel web local para elegir opciones, lanzar y ver el progreso",
+        description="Abre en el navegador un panel para configurar y lanzar importaciones, "
+                    "galerías, reorganizaciones y fusiones, con su progreso en directo.")
+    p_panel.add_argument("--puerto", type=int, default=8765,
+                         help="Puerto del panel (por defecto 8765; si está ocupado, el siguiente)")
+    p_panel.add_argument("--sin-navegador", action="store_true",
+                         help="No abrir el navegador automáticamente")
     return parser
+
+
+COMANDOS_IMPORTACION = ("fotos", "videos", "audio", "todo", "google")
+
+
+def destino_de(origen: Path, destino: Path = None) -> Path:
+    """Biblioteca destino: la indicada o, por defecto, <origen>_organizados."""
+    origen = origen.resolve()
+    return (destino or origen.with_name(origen.name + "_organizados")).resolve()
+
+
+def comprobar_argumentos(args):
+    """Motivo por el que no se puede empezar (carpeta que no existe...), o None."""
+    if args.comando == "reorganizar":
+        if not args.biblioteca.resolve().is_dir():
+            return f"La carpeta no existe: {args.biblioteca.resolve()}"
+        if not (args.whatsapp or args.fechas_aproximadas):
+            return "Indica qué reorganizar: --whatsapp y/o --fechas-aproximadas"
+    elif args.comando == "galeria":
+        if not args.carpeta.resolve().is_dir():
+            return f"La carpeta no existe: {args.carpeta.resolve()}"
+    elif args.comando == "fusionar":
+        coleccion, destino = args.coleccion.resolve(), args.destino.resolve()
+        if not coleccion.is_dir():
+            return f"La colección no existe: {coleccion}"
+        if not destino.is_dir():
+            return f"La biblioteca no existe: {destino}"
+        if coleccion == destino or coleccion in destino.parents or destino in coleccion.parents:
+            return ("La colección y la biblioteca deben ser carpetas distintas y ninguna "
+                    "dentro de la otra.")
+    elif args.comando in COMANDOS_IMPORTACION:
+        origen = args.origen.resolve()
+        if not origen.is_dir():
+            return f"La carpeta de origen no existe: {origen}"
+        destino = destino_de(origen, args.destino)
+        if origen == destino or origen in destino.parents:
+            return "El destino no puede estar dentro del origen ni coincidir con él."
+    return None
 
 
 def validar_origen_destino(origen: Path, destino: Path, simular: bool):
     origen = origen.resolve()
     if not origen.is_dir():
         sys.exit(f"La carpeta de origen no existe: {origen}")
-    destino = (destino or origen.with_name(origen.name + "_organizados")).resolve()
+    destino = destino_de(origen, destino)
     if origen == destino or origen in destino.parents:
         sys.exit("El destino no puede estar dentro del origen ni coincidir con él.")
     if not simular:
@@ -220,41 +305,77 @@ def opciones_videos(args):
                           hilos=args.hilos_video or 1, hw=args.hw)
 
 
+def _descarga_opcional(funcion, que: str):
+    """Los datos descargables son opcionales: sin conexión, la galería se genera igual."""
+    try:
+        funcion()
+    except OSError as exc:   # también urllib.error.URLError
+        print(f"AVISO: no se han podido descargar {que} ({exc}); la galería se genera "
+              "igualmente. Se reintentará en la próxima ejecución.")
+
+
 def galeria(carpeta: Path, args, regenerar: bool = False):
     if not hay_pillow():
         sys.exit(MENSAJE_PILLOW)
+    progreso("inicio", "galeria")
+    if args.descargar_lugares or args.descargar_modelos_caras:
+        progreso("avance", "galeria", paso="Descargando datos")
     if args.descargar_lugares:
         from lugares import descargar_lugares
-        descargar_lugares()
+        _descarga_opcional(descargar_lugares, "las ciudades")
     if args.descargar_modelos_caras:
         from caras import descargar_modelos
-        descargar_modelos()
+        _descarga_opcional(descargar_modelos, "los modelos de caras")
     from galeria import generar_galeria
-    if generar_galeria(carpeta, regenerar, caras=args.caras) and args.servir:
+    generada = generar_galeria(carpeta, regenerar, caras=args.caras)
+    progreso("fin", "galeria")
+    if generada and args.servir:
         from servidor import servir
         servir(carpeta, args.puerto, abrir_navegador=not args.sin_navegador)
+
+
+def reorganizar_biblioteca(biblioteca: Path, simular: bool, **kwargs):
+    from reorganizar import reorganizar
+    progreso("inicio", "reorganizar")
+    progreso("fin", "reorganizar", resumen=reorganizar(biblioteca, simular, **kwargs))
 
 
 def main(argv=None):
     configurar_consola()
     args = construir_parser().parse_args(argv)
 
+    if args.comando == "panel":
+        from panel import servir_panel
+        servir_panel(args.puerto, abrir_navegador=not args.sin_navegador)
+        return
+
+    error = comprobar_argumentos(args)
+    if error:
+        sys.exit(error)
+
     if args.comando == "reorganizar":
-        biblioteca = args.biblioteca.resolve()
-        if not biblioteca.is_dir():
-            sys.exit(f"La carpeta no existe: {biblioteca}")
-        if not (args.whatsapp or args.fechas_aproximadas):
-            sys.exit("Indica qué reorganizar: --whatsapp y/o --fechas-aproximadas")
-        from reorganizar import reorganizar
-        reorganizar(biblioteca, args.simular, whatsapp=args.whatsapp,
-                    fechas=args.fechas_aproximadas, pegatinas_aparte=args.pegatinas_aparte)
+        reorganizar_biblioteca(args.biblioteca.resolve(), args.simular, whatsapp=args.whatsapp,
+                               fechas=args.fechas_aproximadas,
+                               pegatinas_aparte=args.pegatinas_aparte)
+        return
+
+    if args.comando == "fusionar":
+        if not hay_pillow():
+            sys.exit(MENSAJE_PILLOW)
+        from fusionar import EspacioInsuficiente, OpcionesFusion, fusionar
+        progreso("inicio", "fusionar")
+        try:
+            resumen = fusionar(
+                args.coleccion.resolve(), args.destino.resolve(), args.simular, OpcionesFusion(
+                    umbral=args.umbral, margen_dias=args.margen_dias, max_lado=args.max_lado_fotos,
+                    calidad=args.calidad, hilos=args.hilos, galeria=not args.sin_galeria))
+        except EspacioInsuficiente as exc:
+            sys.exit(f"ERROR: {exc}")
+        progreso("fin", "fusionar", resumen=resumen)
         return
 
     if args.comando == "galeria":
-        carpeta = args.carpeta.resolve()
-        if not carpeta.is_dir():
-            sys.exit(f"La carpeta no existe: {carpeta}")
-        galeria(carpeta, args, args.regenerar)
+        galeria(args.carpeta.resolve(), args, args.regenerar)
         return
 
     origen, destino = validar_origen_destino(args.origen, args.destino, args.simular)
@@ -275,27 +396,31 @@ def main(argv=None):
         from fotos import procesar_fotos
         opciones = opciones_fotos(args)
         opciones.externos = externos
-        procesar_fotos(origen, destino, args.simular, opciones)
+        progreso("inicio", "fotos")
+        progreso("fin", "fotos", resumen=procesar_fotos(origen, destino, args.simular, opciones))
 
     if args.comando in ("videos", "todo", "google"):
         if hay_ffmpeg():
             from videos import procesar_videos
             opciones = opciones_videos(args)
             opciones.externos = externos
-            procesar_videos(origen, destino, args.simular, opciones)
+            progreso("inicio", "videos")
+            progreso("fin", "videos", resumen=procesar_videos(
+                origen, destino, args.simular, opciones))
         elif args.comando == "videos":
             sys.exit(MENSAJE_FFMPEG)
         else:
             print("\nAVISO: se omiten los vídeos porque FFmpeg no está instalado "
                   "(winget install Gyan.FFmpeg).")
+            progreso("omitida", "videos", motivo="FFmpeg no está instalado")
 
     if args.comando == "audio" or (args.comando == "todo" and not args.sin_audio):
         from audio import procesar_audio
-        procesar_audio(origen, destino, args.simular)
+        progreso("inicio", "audio")
+        progreso("fin", "audio", resumen=procesar_audio(origen, destino, args.simular))
 
     if args.renombrar_aproximadas and (destino / ".exportador").exists():
-        from reorganizar import reorganizar
-        reorganizar(destino, args.simular, fechas=True)
+        reorganizar_biblioteca(destino, args.simular, fechas=True)
 
     if args.comando in ("todo", "google") and not args.simular and not args.sin_galeria:
         print()
@@ -303,6 +428,10 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    if hasattr(signal, "SIGBREAK"):
+        # Ctrl+Break (y el botón «Detener» del panel) se trata igual que Ctrl+C: el
+        # programa se detiene en orden, sin dejar archivos a medias ni FFmpeg en marcha
+        signal.signal(signal.SIGBREAK, signal.default_int_handler)
     try:
         main()
     except KeyboardInterrupt:

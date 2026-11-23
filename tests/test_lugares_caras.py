@@ -71,6 +71,24 @@ class Lugares(CasoConCarpeta):
             galeria.generar_galeria(bib)
         self.assertIn("--descargar-lugares", self.consola.getvalue())
 
+    def test_ya_descargados_no_se_descargan_otra_vez(self):
+        with mock.patch.object(lugares, "ARCHIVO", self.ruta), \
+                mock.patch.object(lugares, "descargar", side_effect=AssertionError("descarga")):
+            lugares.descargar_lugares()
+        self.assertIn("ya descargados", self.consola.getvalue())
+
+    def test_sin_conexion_la_galeria_se_genera_igual(self):
+        import urllib.error
+        from main import main
+        crear_foto(self.dir / "bib" / "2023" / "IMG_1.jpg")
+        sin_red = urllib.error.URLError("sin conexión")
+        with mock.patch("lugares.descargar_lugares", side_effect=sin_red), \
+                mock.patch("caras.descargar_modelos", side_effect=sin_red):
+            main(["galeria", str(self.dir / "bib"), "--descargar-lugares",
+                  "--descargar-modelos-caras"])
+        self.assertTrue((self.dir / "bib" / "galeria.html").exists())
+        self.assertEqual(self.consola.getvalue().count("AVISO: no se han podido descargar"), 2)
+
 
 class MotorFalso(caras.Motor):
     """Una 'cara' por foto; su vector es el color dominante (misma persona = mismo color)."""

@@ -1,6 +1,7 @@
 """Utilidades compartidas entre fotos, vídeos y galería."""
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -46,6 +47,25 @@ def imprimir(mensaje: str = ""):
     """print() seguro entre hilos."""
     with _LOCK_CONSOLA:
         print(mensaje, flush=True)
+
+
+# El panel web lanza el exportador con EXPORTADOR_PROGRESO=1 y lee de su salida las
+# líneas que empiezan por MARCA_PROGRESO (JSON). En la terminal no se emite nada.
+VARIABLE_PROGRESO = "EXPORTADOR_PROGRESO"
+MARCA_PROGRESO = "@@progreso "
+
+
+def progreso(evento: str, fase: str, **datos):
+    """Evento de progreso para el panel: inicio/fin de una fase, avance (hecho/total)...
+
+    No hace nada si el programa no lo ha lanzado el panel.
+    """
+    if os.environ.get(VARIABLE_PROGRESO) != "1":
+        return
+    linea = json.dumps({"evento": evento, "fase": fase, **datos},
+                       ensure_ascii=False, default=str)
+    with _LOCK_CONSOLA:
+        print(MARCA_PROGRESO + linea, flush=True)
 
 
 def formato_bytes(n: float) -> str:
@@ -357,6 +377,7 @@ def imprimir_resumen(stats: dict, sustantivo: str, simular: bool,
         ("Duplicados (no se tocan)", stats["duplicados"]),
         ("Parecidas a otra foto", stats.get("parecidas", 0)),
         ("Parecidas no importadas", stats.get("parecidas_omitidas", 0)),
+        ("Quitadas antes a mano", stats.get("descartadas", 0)),
         ("Dañados (ver informe)", stats.get("danados", 0)),
         ("Editadas (va el original)", stats.get("editadas", 0)),
         ("Con metadatos de Google", stats.get("con_json", 0)),

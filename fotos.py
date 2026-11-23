@@ -20,7 +20,7 @@ from media_utils import (
     NOMBRE_ORIGINALES, MetadatosExtra, contar_extra, copiar_atomico, elegir_fecha,
     fecha_desde_nombre, fecha_mtime, fecha_y_nombre, hash_archivo, imprimir,
     imprimir_resumen, listar_archivos, metadatos_para_escribir, nombre_libre,
-    nuevas_estadisticas, resumen_extra, ruta_temporal, subcarpeta_fecha,
+    nuevas_estadisticas, progreso, resumen_extra, ruta_temporal, subcarpeta_fecha,
 )
 from metadatos import jpeg_con_extra, leer_metadatos, parametros_guardado
 from similares import agrupar, calidad, dhash, es_copia
@@ -124,7 +124,7 @@ def guardar_optimizada(ruta: Path, destino: Path, opciones: OpcionesFotos = None
 @dataclass
 class _Tarea:
     ruta: Path
-    estado: str = "pendiente"      # pendiente | ya_importado | parecida_conocida | danado | error
+    estado: str = "pendiente"      # pendiente | ya_importado | parecida_conocida | descartada | danado | error
     problema: str = ""           # dañado: vacío | sin cabecera válida | truncado | ilegible
     conocido: bool = False        # dañado ya anotado en una ejecución anterior
     detalle: str = ""
@@ -171,6 +171,9 @@ def _analizar(ruta: Path, catalogo: Catalogo, origen: Path, externos=None) -> _T
             t.estado, (t.problema, t.detalle) = "danado", diagnostico
             return t
         t.hash = hash_archivo(ruta)
+        if catalogo.hash_descartado(t.hash):      # quitada con «Limpiar repetidas»
+            t.estado, t.detalle = "descartada", "quitada con «Limpiar repetidas»"
+            return t
         fila = catalogo.buscar_por_hash(t.hash)   # mismo contenido, otra ruta
         if fila is not None:
             t.estado, t.detalle = "ya_importado", fila["destino"]
@@ -360,7 +363,12 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
             for ruta, motivo in omitidos_externos:
                 informe.anotar("OMITIDA", ruta, detalle=motivo)
             # Fase 1: análisis en paralelo
-            tareas = list(pool.map(lambda r: _analizar(r, catalogo, origen, externos), archivos))
+            tareas = []
+            for n, t in enumerate(pool.map(lambda r: _analizar(r, catalogo, origen, externos),
+                                           archivos), 1):
+                tareas.append(t)
+                progreso("avance", "fotos", paso="Analizando", hecho=n, total=len(archivos),
+                         archivo=t.ruta.relative_to(origen).as_posix())
 
             # Fase 2: duplicados y nombres, en orden cronológico (ráfagas -> _01, _02...)
             reservados, vistos, pendientes, omitidas = set(), {}, [], []
@@ -375,6 +383,9 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
                     continue
                 if t.estado == "parecida_conocida":
                     stats["parecidas_omitidas"] += 1
+                    continue
+                if t.estado == "descartada":
+                    stats["descartadas"] = stats.get("descartadas", 0) + 1
                     continue
                 if t.estado == "danado":
                     _anotar_danado(t, rel, danados, catalogo, informe, stats)
@@ -428,6 +439,8 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
                 stats["parecidas_omitidas"] += 1
 
             # Fase 3: escritura en paralelo
+            if pendientes:
+                progreso("avance", "fotos", paso="Guardando", hecho=0, total=len(pendientes))
             futuros = {pool.submit(_ejecutar, t, opciones, mismo_formato): t
                        for t in pendientes}
             for n, futuro in enumerate(as_completed(futuros), 1):
@@ -435,6 +448,8 @@ def procesar_fotos(origen: Path, destino: Path, simular: bool,
                 rel = t.ruta.relative_to(origen)
                 destino_rel = t.destino.relative_to(destino).as_posix()
                 prefijo = f"  [{n}/{len(pendientes)}]"
+                progreso("avance", "fotos", paso="Guardando", hecho=n, total=len(pendientes),
+                         archivo=rel.as_posix())
                 try:
                     accion = futuro.result()
                 except Exception as exc:

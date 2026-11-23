@@ -398,7 +398,7 @@ class ClipsDeFotosConMovimiento(CasoConCarpeta):
     def procesar(self, bytes_salida):
         comandos = []
 
-        def ffmpeg(cmd, duracion=0, etiqueta=""):
+        def ffmpeg(cmd, duracion=0, etiqueta="", video=""):
             comandos.append(cmd)
             Path(cmd[-1]).write_bytes(b"x" * bytes_salida)
             return True, ""

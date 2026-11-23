@@ -22,10 +22,11 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from catalogo import info_por_destino
-from media_utils import CARPETA_GALERIA, fecha_desde_nombre, fecha_mtime, listar_archivos
+from media_utils import (CARPETA_GALERIA, fecha_desde_nombre, fecha_mtime, listar_archivos,
+                         progreso)
 from clasificacion import RE_CAPTURA, ambito, es_pegatina
 import lugares
-from similares import agrupar, dhash
+from similares import UMBRAL, _proporciones_compatibles, agrupar, con_detalle, dhash
 
 EXTENSIONES_FOTO = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"}
 EXTENSIONES_VIDEO = {".mp4", ".webm", ".mov", ".m4v"}
@@ -217,9 +218,13 @@ def construir_indice(carpeta: Path, regenerar: bool = False, hilos: int = 0):
 
     rutas = listar_archivos(carpeta, EXTENSIONES_FOTO | EXTENSIONES_VIDEO | EXTENSIONES_AUDIO)
     hilos = hilos or min(8, os.cpu_count() or 2)
+    resultados = []
     with ThreadPoolExecutor(hilos) as pool:
-        resultados = list(pool.map(
-            lambda r: _elemento(r, carpeta, previos, hay_ffmpeg), rutas))
+        for n, resultado in enumerate(pool.map(
+                lambda r: _elemento(r, carpeta, previos, hay_ffmpeg), rutas), 1):
+            resultados.append(resultado)
+            progreso("avance", "galeria", paso="Miniaturas", hecho=n, total=len(rutas),
+                     archivo=resultado[0]["src"])
 
     grupos = marcar_parecidas([e for e, _ in resultados])
 
@@ -277,6 +282,50 @@ def marcar_parecidas(elementos: list) -> int:
     return len(grupos)
 
 
+def actualizar_parecidas(elementos: list, numeros_quitados=(), nuevos=()):
+    """Como `marcar_parecidas`, pero rehace solo los grupos afectados: los de número en
+    `numeros_quitados` (de fotos que se han quitado) y los que tocan las fotos `nuevos`
+    (srcs añadidos). Da el mismo agrupamiento sin comparar toda la biblioteca entre sí,
+    que con decenas de miles de fotos tarda más de un minuto."""
+    fotos = {e["src"]: e for e in elementos if e.get("dhash")}
+    proporciones = {src: e["ancho"] / e["alto"] for src, e in fotos.items()
+                    if e.get("ancho") and e.get("alto")}
+    por_numero = {}
+    for src, e in fotos.items():
+        if e.get("parecidas"):
+            por_numero.setdefault(e["parecidas"], set()).add(src)
+    tocados = {n for n in numeros_quitados if n}
+    afectados = set()
+    valores = {src: int(e["dhash"], 16) for src, e in fotos.items() if con_detalle(e["dhash"])}
+    for nuevo in nuevos:
+        if nuevo not in fotos:
+            continue
+        afectados.add(nuevo)
+        v = valores.get(nuevo)
+        if v is None:
+            continue
+        for src, w in valores.items():
+            if (src != nuevo and (v ^ w).bit_count() <= UMBRAL
+                    and _proporciones_compatibles(proporciones.get(nuevo), proporciones.get(src))):
+                afectados.add(src)
+                if fotos[src].get("parecidas"):
+                    tocados.add(fotos[src]["parecidas"])
+    for n in tocados:
+        afectados |= por_numero.get(n, set())
+    for src in afectados:
+        fotos[src].pop("parecidas", None)
+    libres = sorted(tocados)
+    siguiente = max(por_numero, default=0) + 1
+    for grupo in sorted(sorted(g) for g in agrupar({s: fotos[s]["dhash"] for s in afectados},
+                                                    proporciones)):
+        if libres:
+            n = libres.pop(0)
+        else:
+            n, siguiente = siguiente, siguiente + 1
+        for src in grupo:
+            fotos[src]["parecidas"] = n
+
+
 # ----------------------------- Generación -----------------------------
 
 def _escribir(ruta: Path, texto: str):
@@ -320,6 +369,10 @@ def generar_galeria(carpeta: Path, regenerar: bool = False, caras: bool = False)
     _escribir(carpeta / "galeria.html", PLANTILLA.read_text(encoding="utf-8"))
 
     nuevos = len(elementos) - stats["reutilizados"]
+    progreso("resumen", "galeria", resumen={
+        "fotos": stats["fotos"], "videos": stats["videos"], "audios": stats["audios"],
+        "nuevos": nuevos, "reutilizados": stats["reutilizados"],
+        "grupos_parecidas": stats["grupos_parecidas"]})
     print(f"Galería generada: {stats['fotos']} foto(s), {stats['videos']} vídeo(s) "
           f"y {stats['audios']} audio(s) "
           f"({nuevos} nuevo(s) o modificado(s), {stats['reutilizados']} sin cambios).")

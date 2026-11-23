@@ -77,7 +77,7 @@ class Procesamiento(CasoConCarpeta):
         self.video.write_bytes(CONTENIDO)
 
     def procesar(self, bytes_salida=None, ok=True, **opciones):
-        def codificar(cmd, duracion=0, etiqueta=""):
+        def codificar(cmd, duracion=0, etiqueta="", video=""):
             if bytes_salida is not None:
                 Path(cmd[-1]).write_bytes(b"x" * bytes_salida)
             return ok, "" if ok else "Conversion failed!"
