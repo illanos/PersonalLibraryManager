@@ -13,23 +13,30 @@ import sys
 import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import timedelta, timezone
 from pathlib import Path
 
 from catalogo import Catalogo, Informe
 from clasificacion import carpeta_destino, categoria
 from danados import RegistroDanados, diagnosticar, problema_de_excepcion
 from media_utils import (
-    NOMBRE_ORIGINALES, copiar_atomico, fecha_desde_nombre, fecha_mtime, fecha_y_nombre,
-    formato_bytes, hash_archivo,
-    imprimir, imprimir_resumen, listar_archivos, nombre_libre, nuevas_estadisticas,
-    parsear_fecha_iso, progreso, ruta_temporal, subcarpeta_fecha,
+    NOMBRE_ORIGINALES, MetadatosExtra, contar_extra, copiar_atomico, elegir_fecha,
+    fecha_desde_nombre, fecha_mtime, fecha_y_nombre, formato_bytes, hash_archivo, imprimir,
+    imprimir_resumen, listar_archivos, metadatos_para_escribir, nombre_libre,
+    nombre_tiene_hora, nuevas_estadisticas, parsear_fecha_iso, progreso, resumen_extra,
+    ruta_temporal, subcarpeta_fecha,
 )
 
 EXTENSIONES_VIDEO = {
     ".mp4", ".mov", ".avi", ".mkv", ".wmv", ".m4v",
     ".mpg", ".mpeg", ".mts", ".m2ts", ".3gp", ".webm", ".flv",
 }
+# Extensiones con las que se guarda un vídeo copiado tal cual: el clip de una foto con
+# movimiento de Google (PXL_….MP) es un MP4
+EXTENSION_REAL = {".mp": ".mp4"}
+# Contenedores que se pueden remultiplexar sin recodificar para añadirles metadatos
+FORMATO_REMUX = {".mp4": "mp4", ".m4v": "mp4", ".mp": "mp4", ".mov": "mov"}
 
 AUDIO = ["-b:a", "128k"]
 
@@ -65,6 +72,9 @@ class OpcionesVideos:
     conservar_originales: bool = False   # copia extra en originales/ (el origen nunca se toca)
     hilos: int = 1           # vídeos codificándose a la vez
     hw: str = "no"           # aceleración por hardware: auto | nvenc | qsv | amf | no
+    # Metadatos que vienen aparte de cada archivo (ver OpcionesFotos.externos); puede
+    # tener `extensiones_video`, extensiones extra que buscar (p. ej. {".mp"})
+    externos: object = None
 
 
 # ----------------------------- Metadatos -----------------------------
@@ -148,19 +158,46 @@ def sondear(ruta: Path):
         duracion = float(formato.get("duration") or video.get("duration") or 0)
     except ValueError:
         duracion = 0.0
+    tags = _tags_contenedor(datos)
     return {
         "fecha": _fecha_metadatos(datos),
         "ancho": ancho, "alto": alto, "rotacion": rotacion,
         "duracion": duracion,
         "codec": video.get("codec_name", ""),
-        "camara": _camara_video(_tags_contenedor(datos)),
-        "gps": _gps_video(_tags_contenedor(datos)),
+        "camara": _camara_video(tags),
+        "gps": _gps_video(tags),
+        # Las que graba la importación de Google (álbumes y personas) u otro programa
+        "etiquetas": [p.strip() for p in str(tags.get("keywords") or "").split(",")
+                      if p.strip()],
+        "descripcion": str(tags.get("description") or "").strip(),
     }
 
 
+# Más que esto entre la fecha del nombre (VID_20160812_203028) y la de los metadatos, y
+# manda el nombre: en un Takeout real, 105 de 400 vídeos traían en los metadatos la fecha
+# en que se volvieron a procesar (siempre posterior: de 20 min a 3 días), no la de grabación
+DESVIO_MAXIMO_NOMBRE = timedelta(minutes=10)
+# Nombres cuya hora no es local: los Pixel nombran PXL_AAAAMMDD_HHMMSSmmm en UTC
+_RE_NOMBRE_EN_UTC = re.compile(r"^PXL_", re.IGNORECASE)
+
+
+def fecha_nombre_camara(ruta: Path):
+    """Fecha *con hora* del nombre que pone la cámara (VID_20160812_203028), o None."""
+    if _RE_NOMBRE_EN_UTC.match(ruta.name) or not nombre_tiene_hora(ruta.stem):
+        return None
+    return fecha_desde_nombre(ruta.stem)
+
+
 def fecha_video(ruta: Path, info: dict = None):
-    """(fecha, fuente): metadatos > nombre del archivo > fecha de modificación."""
+    """(fecha, fuente): metadatos > nombre del archivo > fecha de modificación.
+
+    Excepción: si el nombre trae fecha y hora de la cámara y los metadatos se alejan más
+    de DESVIO_MAXIMO_NOMBRE, manda el nombre (los metadatos son de un reprocesado).
+    """
     if info and info.get("fecha"):
+        del_nombre = fecha_nombre_camara(ruta)
+        if del_nombre and abs(info["fecha"] - del_nombre) > DESVIO_MAXIMO_NOMBRE:
+            return del_nombre, "nombre"
         return info["fecha"], "metadatos"
     fecha = fecha_desde_nombre(ruta.stem)
     if fecha:
@@ -286,8 +323,42 @@ def argumentos_hw(familia: str, codec: str, calidad: int) -> list:
     return args
 
 
+def argumento_fecha(fecha) -> list:
+    """`-metadata creation_time=...` (UTC) para una hora local de este equipo."""
+    utc = fecha.astimezone(timezone.utc)
+    return ["-metadata", f"creation_time={utc:%Y-%m-%dT%H:%M:%S}Z"]
+
+
+def metadatos_del_trabajo(extra: MetadatosExtra, info: dict, fecha, fuente: str) -> list:
+    """Todos los -metadata de un vídeo: los externos y, si el nombre ha corregido la fecha
+    de unos metadatos que no cuadraban (ver fecha_video), la fecha buena."""
+    args = argumentos_metadatos(extra, info)   # sin creation_time: el vídeo ya trae uno
+    if fuente == "nombre" and info.get("fecha"):
+        args += argumento_fecha(fecha)
+    return args
+
+
+def argumentos_metadatos(extra: MetadatosExtra, info: dict) -> list:
+    """`-metadata` de FFmpeg con lo que el vídeo no trae: fecha y ubicación solo si le
+    faltan; descripción y palabras clave (álbumes y personas) siempre que las haya."""
+    if extra is None:
+        return []
+    args = []
+    if extra.fecha and not info.get("fecha"):
+        args += argumento_fecha(extra.fecha)
+    if extra.gps and not info.get("gps"):
+        lat, lon = extra.gps[:2]
+        args += ["-metadata", f"location={lat:+08.4f}{lon:+09.4f}/"]   # ISO 6709
+    if extra.descripcion:
+        args += ["-metadata", f"description={extra.descripcion}"]
+    palabras = list(dict.fromkeys(extra.etiquetas + extra.personas))
+    if palabras:
+        args += ["-metadata", "keywords=" + ", ".join(palabras)]
+    return args
+
+
 def comando_codificacion(entrada: Path, salida: Path, opciones: OpcionesVideos,
-                         hw: str = None) -> list:
+                         hw: str = None, metadatos: list = ()) -> list:
     perfil = PERFILES[opciones.codec]
     crf = opciones.crf if opciones.crf is not None else perfil["crf"]
     if hw:
@@ -297,11 +368,21 @@ def comando_codificacion(entrada: Path, salida: Path, opciones: OpcionesVideos,
         video += ["-crf", str(crf)]
     return [
         "ffmpeg", "-hide_banner", "-nostdin", "-y", "-i", str(entrada),
-        "-map", "0:v:0", "-map", "0:a:0?", "-map_metadata", "0",
+        "-map", "0:v:0", "-map", "0:a:0?", "-map_metadata", "0", *metadatos,
         "-vf", filtro_escala(opciones.max_lado),
         *video, *perfil["audio"], *perfil["extra"],
         "-loglevel", "error", "-progress", "pipe:1", "-nostats",
         "-f", perfil["formato"], str(salida),
+    ]
+
+
+def comando_remux(entrada: Path, salida: Path, metadatos: list) -> list:
+    """Mismo vídeo y audio, sin recodificar, con metadatos añadidos."""
+    return [
+        "ffmpeg", "-hide_banner", "-nostdin", "-y", "-i", str(entrada),
+        "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-map_metadata", "0", *metadatos,
+        "-movflags", "+faststart+use_metadata_tags", "-loglevel", "error",
+        "-f", FORMATO_REMUX[entrada.suffix.lower()], str(salida),
     ]
 
 
@@ -387,6 +468,8 @@ class _Trabajo:
     tmp: Path = None
     hw_usado: str = None
     aviso_hw: str = ""
+    extra: MetadatosExtra = None   # metadatos externos que se añaden al vídeo
+    metadatos: list = ()           # sus argumentos -metadata para FFmpeg
 
 
 def _codificar(t: _Trabajo, opciones: OpcionesVideos, hw: str, etiqueta: str):
@@ -396,16 +479,32 @@ def _codificar(t: _Trabajo, opciones: OpcionesVideos, hw: str, etiqueta: str):
     duracion = t.info.get("duracion", 0)
     video = t.rel.as_posix()
     if hw:
-        ok, error = ejecutar_ffmpeg(comando_codificacion(t.ruta, t.tmp, opciones, hw),
-                                    duracion, etiqueta, video)
+        ok, error = ejecutar_ffmpeg(
+            comando_codificacion(t.ruta, t.tmp, opciones, hw, t.metadatos), duracion, etiqueta,
+            video)
         if ok and t.tmp.exists() and t.tmp.stat().st_size > 0:
             t.hw_usado = hw
             return ok, error
         t.tmp.unlink(missing_ok=True)
         ultima = (error or "sin salida").splitlines()[-1][:120] if error else "sin salida"
         t.aviso_hw = f"{hw} falló ({ultima}); repetido por software"
-    return ejecutar_ffmpeg(comando_codificacion(t.ruta, t.tmp, opciones), duracion, etiqueta,
-                           video)
+    return ejecutar_ffmpeg(comando_codificacion(t.ruta, t.tmp, opciones, None, t.metadatos),
+                           duracion, etiqueta, video)
+
+
+def _copiar_tal_cual(t: _Trabajo, final: Path):
+    """El original a `final`; si hay metadatos que añadir y el contenedor lo permite, se
+    remultiplexa sin recodificar para añadirlos (si FFmpeg falla, se copia sin más)."""
+    if t.metadatos and t.ruta.suffix.lower() in FORMATO_REMUX:
+        tmp = ruta_temporal(final)
+        try:
+            ok, _ = ejecutar_ffmpeg(comando_remux(t.ruta, tmp, list(t.metadatos)))
+            if ok and tmp.exists() and tmp.stat().st_size > 0:
+                os.replace(tmp, final)
+                return
+        finally:
+            tmp.unlink(missing_ok=True)
+    copiar_atomico(t.ruta, final)
 
 
 def procesar_videos(origen: Path, destino: Path, simular: bool,
@@ -425,7 +524,15 @@ def procesar_videos(origen: Path, destino: Path, simular: bool,
     carpeta_originales = destino / NOMBRE_ORIGINALES
     stats = nuevas_estadisticas()
 
-    archivos = listar_archivos(origen, EXTENSIONES_VIDEO)
+    externos = opciones.externos
+    extensiones = EXTENSIONES_VIDEO | set(getattr(externos, "extensiones_video", ()))
+    archivos = listar_archivos(origen, extensiones)
+    omitidos_externos = []
+    if externos:
+        omitidos_externos = [(a, m) for a in archivos for m in [externos.omitir(a)] if m]
+        descartar = {a for a, _ in omitidos_externos}
+        archivos = [a for a in archivos if a not in descartar]
+        stats["editadas"] = len(omitidos_externos)
     if not archivos:
         print(f"No se encontraron vídeos en {origen}")
         return stats
@@ -439,7 +546,7 @@ def procesar_videos(origen: Path, destino: Path, simular: bool,
     if aviso_hw:
         print(f"AVISO: {aviso_hw}\n")
 
-    reservados, vistos, trabajos = set(), {}, []
+    reservados, vistos, trabajos, trabajo_de = set(), {}, [], {}
     danados = RegistroDanados(destino, origen, "videos", simular)
 
     def danado(ruta, st, problema, detalle, conocido=False):
@@ -452,6 +559,8 @@ def procesar_videos(origen: Path, destino: Path, simular: bool,
         stats["danados"] += 1
 
     with Catalogo(destino, simular) as catalogo, Informe(destino, "videos", simular) as informe:
+        for ruta, motivo in omitidos_externos:
+            informe.anotar("OMITIDO", ruta, detalle=motivo)
         # Fase 1: qué hay que codificar y con qué nombre (en orden, sin codificar nada)
         for n, ruta in enumerate(archivos, 1):
             rel = ruta.relative_to(origen)
@@ -480,11 +589,25 @@ def procesar_videos(origen: Path, destino: Path, simular: bool,
                     imprimir(f"{prefijo} DUPLICADO  {rel}  (igual que {vistos[digest]})")
                     informe.anotar("DUPLICADO", ruta, detalle=f"igual que {vistos[digest]}")
                     stats["duplicados"] += 1
+                    primero = trabajo_de.get(digest)
+                    otro = externos.metadatos(ruta) if externos and primero else None
+                    if otro is not None:   # sus álbumes y personas, al que sí se importa
+                        primero.extra = (replace(otro, fecha=None, zona="")
+                                         if primero.extra is None
+                                         else primero.extra.combinar(otro))
+                        primero.metadatos = metadatos_del_trabajo(
+                            primero.extra, primero.info, primero.fecha, primero.fuente)
                     continue
                 vistos[digest] = rel
 
                 info = sondear(ruta) or {}
-                fecha, fuente, base = fecha_y_nombre(ruta, *fecha_video(ruta, info))
+                extra = externos.metadatos(ruta) if externos else None
+                fecha, fuente = elegir_fecha(ruta, *fecha_video(ruta, info), extra)
+                fecha, fuente, base = fecha_y_nombre(ruta, fecha, fuente)
+                extra = metadatos_para_escribir(ruta, extra, fecha, fuente)
+                if extra is not None:   # fecha y GPS solo si el vídeo no trae los suyos
+                    extra = replace(extra, fecha=None if info.get("fecha") else extra.fecha,
+                                    gps=None if info.get("gps") else extra.gps)
                 cat = categoria(rel)
                 carpeta_rel = carpeta_destino(fecha, "" if cat == "captura" else cat, "video")
                 destino_video = nombre_libre(destino / carpeta_rel, base, perfil["ext"],
@@ -496,11 +619,15 @@ def procesar_videos(origen: Path, destino: Path, simular: bool,
 
                 if simular:
                     imprimir(f"{prefijo} {rel}  ->  {carpeta_rel}/{destino_video.name}{cambio}"
-                             f"  [fecha: {fuente}]")
+                             f"  [fecha: {fuente}]{resumen_extra(extra, externos)}")
                     stats["procesados"] += 1
+                    contar_extra(stats, extra, externos)
                     continue
+                metadatos = metadatos_del_trabajo(extra, info, fecha, fuente)
                 trabajos.append(_Trabajo(ruta, rel, st, digest, info, fecha, fuente, base,
-                                         carpeta_rel, destino_video, cambio))
+                                         carpeta_rel, destino_video, cambio, extra=extra,
+                                         metadatos=metadatos))
+                trabajo_de[digest] = trabajos[-1]
             except KeyboardInterrupt:
                 print("\nInterrumpido antes de codificar nada; vuelve a ejecutar para continuar.")
                 raise
@@ -580,8 +707,9 @@ def _terminar(t: _Trabajo, ok, error, prefijo, destino, carpeta_originales, opci
         # Recomprimir no compensa: el original entra en la biblioteca tal cual
         tmp.unlink()
         reservados.discard(str(t.destino).lower())
-        final = nombre_libre(destino / t.carpeta_rel, t.base, ruta.suffix.lower(), reservados)
-        copiar_atomico(ruta, final)
+        extension = EXTENSION_REAL.get(ruta.suffix.lower(), ruta.suffix.lower())
+        final = nombre_libre(destino / t.carpeta_rel, t.base, extension, reservados)
+        _copiar_tal_cual(t, final)
         original_rel, accion = None, "SIN_CAMBIOS"
         imprimir(f"{prefijo} SIN CAMBIOS  {rel}  ->  {t.carpeta_rel}/{final.name}"
                  "  (ya estaba bien comprimido)")
@@ -608,8 +736,11 @@ def _terminar(t: _Trabajo, ok, error, prefijo, destino, carpeta_originales, opci
         mtime_ns=st.st_mtime_ns, destino=destino_rel, original=original_rel,
         fecha=t.fecha.isoformat(), fuente_fecha=t.fuente,
         bytes_antes=st.st_size, bytes_despues=despues)
+    detalle = [resumen_extra(t.extra, opciones.externos).strip(" []"),
+               f"hardware {t.hw_usado}" if t.hw_usado else t.aviso_hw]
     informe.anotar(accion, ruta, destino_rel, t.fecha, t.fuente, st.st_size, despues,
-                   f"hardware {t.hw_usado}" if t.hw_usado else t.aviso_hw)
+                   "; ".join(filter(None, detalle)))
+    contar_extra(stats, t.extra, opciones.externos)
     stats["procesados"] += 1
     stats["sin_cambios"] += accion == "SIN_CAMBIOS"
     stats["bytes_antes"] += st.st_size

@@ -7,6 +7,7 @@ import re
 import shutil
 import sys
 import threading
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -241,7 +242,11 @@ def parsear_fecha_iso(texto):
     """
     if not texto:
         return None
-    m = _RE_ISO.match(str(texto))
+    texto = str(texto)
+    if ";" in texto:
+        # FFmpeg repite la etiqueta al exportar con use_metadata_tags: "A;A"
+        return next(filter(None, map(parsear_fecha_iso, texto.split(";"))), None)
+    m = _RE_ISO.match(texto)
     if not m:
         return None
     *partes, zona = m.groups()
@@ -259,12 +264,106 @@ def parsear_fecha_iso(texto):
     return fecha if fecha_plausible(fecha) else None
 
 
+# ----------------------------- Metadatos externos -----------------------------
+
+@dataclass
+class MetadatosExtra:
+    """Metadatos que vienen aparte del archivo (p. ej. el JSON de Google Fotos).
+
+    Al exportar se añade a la foto o al vídeo lo que le falte: la fecha y el GPS solo
+    si no los trae; etiquetas y personas se suman; la descripción manda sobre la suya.
+    """
+    fecha: datetime = None           # hora local de captura
+    zona: str = ""                   # desfase de `fecha` respecto a UTC ("+02:00"); "" = no se sabe
+    fuente: str = "google"           # cómo se anota la fecha en el catálogo y el informe
+    fecha_prioritaria: bool = False  # manda sobre la del propio archivo (clip de una foto con movimiento)
+    fecha_dudosa: bool = False       # no es la de captura (p. ej. la de subida): no se graba
+    gps: tuple = None                # (latitud, longitud, altitud en m o None)
+    descripcion: str = ""
+    etiquetas: list = field(default_factory=list)   # álbumes de Google Fotos
+    personas: list = field(default_factory=list)
+    favorita: bool = False
+
+    def aporta_xmp(self) -> bool:
+        return bool(self.etiquetas or self.personas or self.descripcion or self.favorita)
+
+    def combinar(self, otro: "MetadatosExtra") -> "MetadatosExtra":
+        """Junta los de dos copias idénticas del mismo archivo (p. ej. la de un álbum y la
+        de «Fotos del AAAA»): álbumes y personas de las dos; lo demás, el de `self` si lo
+        tiene. La fecha no se toca: ya se eligió con el archivo que se importa."""
+        if otro is None:
+            return self
+        def unir(a, b):
+            vistos = {x.lower() for x in a}
+            return a + [x for x in b if x.lower() not in vistos and not vistos.add(x.lower())]
+        return replace(self, gps=self.gps or otro.gps,
+                       descripcion=self.descripcion or otro.descripcion,
+                       etiquetas=unir(self.etiquetas, otro.etiquetas),
+                       personas=unir(self.personas, otro.personas),
+                       favorita=self.favorita or otro.favorita)
+
+
+def elegir_fecha(ruta: Path, fecha: datetime, fuente: str, extra: MetadatosExtra = None):
+    """(fecha, fuente) combinando la del archivo con la de unos metadatos externos.
+
+    Orden: la del propio archivo (EXIF, metadatos del vídeo) > nombre con hora > externa >
+    nombre sin hora > fecha del archivo. En Google Fotos, la fecha del JSON de una foto sin
+    EXIF suele ser la de subida: un nombre con hora (PANO_20120714_124817) manda sobre ella,
+    y uno con solo el día (IMG-20240512-WA0001) solo la acepta si es del mismo día.
+    """
+    if extra is None or extra.fecha is None:
+        return fecha, fuente
+    if extra.fecha_prioritaria:
+        return extra.fecha, extra.fuente
+    if fuente in ("exif", "metadatos"):
+        return fecha, fuente
+    if fuente == "nombre" and (nombre_tiene_hora(Path(ruta).stem)
+                               or fecha.date() != extra.fecha.date()):
+        return fecha, fuente
+    return extra.fecha, extra.fuente
+
+
+def metadatos_para_escribir(ruta: Path, extra: MetadatosExtra, fecha: datetime, fuente: str):
+    """`extra` con la fecha que debe grabarse en el archivo exportado: la elegida por
+    `elegir_fecha`, salvo que salga del nombre sin hora o de la fecha del archivo (no se
+    inventa una hora). Solo se graba si el archivo no trae ya la suya."""
+    if extra is None:
+        return None
+    fiable = ((fuente == extra.fuente and not extra.fecha_dudosa)
+              or (fuente == "nombre" and nombre_tiene_hora(Path(ruta).stem)))
+    return replace(extra, fecha=fecha if fiable else None,
+                   zona=extra.zona if fuente == extra.fuente else "")
+
+
+def resumen_extra(extra: MetadatosExtra, externos, copia: bool = False) -> str:
+    """'  [añade: fecha, GPS, 2 álbum(es)…]': lo que se graba en el archivo exportado
+    (para la consola y el informe). `copia`: se copia tal cual (GIF animado, pegatina)."""
+    if not externos:
+        return ""
+    if extra is None:
+        return "  [sin JSON]"
+    if copia:
+        return "  [copia tal cual: sin metadatos añadidos]"
+    partes = [nombre for nombre, hay in (
+        ("fecha", extra.fecha), ("GPS", extra.gps), ("descripción", extra.descripcion),
+        (f"{len(extra.etiquetas)} álbum(es)", extra.etiquetas),
+        (f"{len(extra.personas)} persona(s)", extra.personas),
+        ("favorita", extra.favorita)) if hay]
+    return f"  [añade: {', '.join(partes)}]" if partes else "  [nada que añadir]"
+
+
+def contar_extra(stats: dict, extra: MetadatosExtra, externos):
+    if externos:
+        stats["con_json" if extra is not None else "sin_json"] += 1
+
+
 # ----------------------------- Estadísticas -----------------------------
 
 def nuevas_estadisticas() -> dict:
     return {"procesados": 0, "sin_cambios": 0, "ya_importados": 0, "duplicados": 0,
             "omitidos": 0, "errores": 0, "bytes_antes": 0, "bytes_despues": 0,
-            "parecidas": 0, "parecidas_omitidas": 0, "danados": 0}
+            "parecidas": 0, "parecidas_omitidas": 0, "danados": 0,
+            "editadas": 0, "con_json": 0, "sin_json": 0}
 
 
 def imprimir_resumen(stats: dict, sustantivo: str, simular: bool,
@@ -280,6 +379,9 @@ def imprimir_resumen(stats: dict, sustantivo: str, simular: bool,
         ("Parecidas no importadas", stats.get("parecidas_omitidas", 0)),
         ("Quitadas antes a mano", stats.get("descartadas", 0)),
         ("Dañados (ver informe)", stats.get("danados", 0)),
+        ("Editadas (va el original)", stats.get("editadas", 0)),
+        ("Con metadatos de Google", stats.get("con_json", 0)),
+        ("Sin JSON de Google", stats.get("sin_json", 0)),
         ("Omitidos", stats["omitidos"]),
         ("Errores", stats["errores"]),
     ]

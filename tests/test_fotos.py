@@ -86,6 +86,26 @@ class Exportacion(CasoConCarpeta):
         self.assertEqual(leer_metadatos(self.dir / "b.webp")["etiquetas"][:2],
                          ["playa", "vacaciones"])
 
+    def test_nunca_recomprime_con_mas_calidad_que_el_original(self):
+        # Error anterior: un original a calidad 66 (Google) reducido y guardado a 88 pesaba
+        # más que el original; ahora se guarda como mucho a la calidad que ya tenía
+        from fotos import calidad_jpeg
+        origen = crear_foto(self.dir / "q60.jpg", tam=(4000, 3000), quality=60)
+        with Image.open(origen) as im:
+            self.assertAlmostEqual(calidad_jpeg(im), 60, delta=1)
+        guardar_optimizada(origen, self.dir / "b.jpg", OpcionesFotos(calidad=88))
+        with Image.open(self.dir / "b.jpg") as im:
+            self.assertEqual(im.size, (3200, 2400))
+            self.assertAlmostEqual(calidad_jpeg(im), 60, delta=1)
+        # Si el original es mejor que lo pedido, manda la calidad pedida
+        origen = crear_foto(self.dir / "q95.jpg", quality=95)
+        guardar_optimizada(origen, self.dir / "c.jpg", OpcionesFotos(calidad=88))
+        with Image.open(self.dir / "c.jpg") as im:
+            self.assertAlmostEqual(calidad_jpeg(im), 88, delta=1)
+        Image.new("RGB", (40, 30)).save(self.dir / "p.png")
+        with Image.open(self.dir / "p.png") as im:
+            self.assertIsNone(calidad_jpeg(im))
+
 
 class Procesamiento(CasoConCarpeta):
     def setUp(self):

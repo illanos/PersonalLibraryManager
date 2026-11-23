@@ -36,6 +36,31 @@ class Diagnostico(CasoConCarpeta):
         self.assertIsNone(diag("con_cola.jpg"))
         self.assertIsNone(diag("buena.jpg"))
 
+    def test_extension_equivocada_no_es_danado(self):
+        # Google Fotos entrega PNG llamados .jpg y JPEG llamados .png: son fotos sanas
+        from PIL import Image
+        Image.new("RGB", (60, 40), (10, 20, 30)).save(self.dir / "png.jpg", "PNG")
+        crear_foto(self.dir / "jpeg.png")
+        Image.new("RGB", (60, 40)).save(self.dir / "png_cortado.jpg", "PNG")
+        datos = (self.dir / "png_cortado.jpg").read_bytes()
+        (self.dir / "png_cortado.jpg").write_bytes(datos[:len(datos) // 2])
+        for nombre, esperado in (("png.jpg", None), ("jpeg.png", None),
+                                 ("png_cortado.jpg", TRUNCADO)):
+            ruta = self.dir / nombre
+            resultado = diagnosticar(ruta, ruta.stat().st_size, imagen=True)
+            self.assertEqual(resultado[0] if resultado else None, esperado, nombre)
+        # Un vídeo con contenido de otra cosa sí lo es
+        (self.dir / "audio.mpeg").write_bytes(b"ID3\x02\x00\x00\x00\x00" + b"x" * 100)
+        self.assertEqual(diagnosticar(self.dir / "audio.mpeg", 108)[0], SIN_CABECERA)
+
+    def test_extension_equivocada_se_importa(self):
+        from PIL import Image
+        origen = self.dir / "movil"
+        origen.mkdir()
+        Image.new("RGB", (60, 40), (10, 20, 30)).save(origen / "2014-10-26.jpg", "PNG")
+        stats = procesar_fotos(origen, self.dir / "bib", False, OpcionesFotos())
+        self.assertEqual((stats["procesados"], stats["danados"]), (1, 0))
+
 
 class Importacion(CasoConCarpeta):
     def setUp(self):

@@ -212,11 +212,13 @@ def fases_previstas(args) -> list:
         return [args.comando]
     if args.comando == "todo":
         fases = ["fotos", "videos"] + ([] if args.sin_audio else ["audio"])
+    elif args.comando == "google":   # Takeout: sin audio
+        fases = ["fotos", "videos"]
     else:
         fases = [args.comando]
     if args.renombrar_aproximadas:
         fases.append("reorganizar")
-    if args.comando == "todo" and not args.simular and not args.sin_galeria:
+    if args.comando in ("todo", "google") and not args.simular and not args.sin_galeria:
         fases.append("galeria")
     return fases
 

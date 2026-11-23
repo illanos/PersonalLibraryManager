@@ -13,6 +13,8 @@ o cámara. Todo funciona en tu equipo, sin subir nada a ningún sitio.
 - **WhatsApp aparte**: lo de WhatsApp va a su propia carpeta y la galería no lo mezcla con el resto.
 - **Galería web**: línea de tiempo, buscador, favoritos, caras, lugares sin conexión y una
   herramienta para **limpiar repetidas** con papelera restaurable.
+- **Google Fotos (Takeout)**: importa la descarga de Google Fotos grabando en cada foto y
+  vídeo lo que dicen sus JSON (fecha, GPS, personas, descripción y álbumes como etiquetas).
 - **Fusiona colecciones**: añade otra biblioteca (p. ej. la de Google Fotos) sin repetir
   nada y quedándote siempre con la copia de más calidad.
 - **Panel web** para elegir opciones, lanzar y seguir el progreso sin usar la terminal.
@@ -127,6 +129,18 @@ Abrir `galeria.html` con doble clic no funciona (el navegador bloquea la lectura
 locales): usa siempre `--servir`. Desde la galería, el botón **Limpiar repetidas** muestra
 los grupos de fotos casi idénticas, propone la mejor copia y mueve las demás a una papelera
 de la biblioteca, desde la que se pueden restaurar.
+
+### Importar un Takeout de Google Fotos
+
+Igual que `todo`, para la carpeta `Google Fotos` de un Takeout: cada foto y vídeo recibe lo
+que dice su JSON y no trae dentro (fecha, GPS), además de personas, descripción y los álbumes
+como etiquetas. Los JSON no se copian, de las versiones `-editada` se importa solo el original
+y el clip de cada foto con movimiento se importa como vídeo con el mismo nombre que su foto.
+
+```powershell
+python main.py google "G:\Takeout\Google Fotos" --destino "D:\Google" --simular
+python main.py google "G:\Takeout\Google Fotos" --destino "D:\Google"
+```
 
 ### Fusionar otra colección
 

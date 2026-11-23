@@ -10,19 +10,26 @@ Al exportar una foto se conservan:
 La rotación se aplica a los píxeles y la orientación queda como "normal" en EXIF y XMP.
 
 Lo único que se descarta es lo que deja de tener sentido tras recomprimir:
-la miniatura EXIF interna y los mapas de profundidad/ganancia HDR (MPF).
+la miniatura EXIF interna, los mapas de profundidad/ganancia HDR (MPF) y el vídeo
+incrustado de las fotos con movimiento (también su anuncio en el XMP).
+
+Metadatos externos (`MetadatosExtra`, p. ej. el JSON de Google Fotos): se añaden al
+exportar. Fecha y GPS van al EXIF solo si la foto no los trae; álbumes (dc:subject),
+personas (Iptc4xmpExt:PersonInImage), descripción y favorita (xmp:Rating) van al XMP.
 """
 
+import io
 import math
 import re
 import struct
+import threading
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
 from PIL import Image, IptcImagePlugin
 
-from media_utils import fecha_desde_nombre, fecha_mtime, fecha_plausible
+from media_utils import MetadatosExtra, fecha_desde_nombre, fecha_mtime, fecha_plausible
 
 # --- Etiquetas EXIF ---
 IFD_EXIF, IFD_GPS = 0x8769, 0x8825
@@ -31,6 +38,7 @@ TAG_FECHA, TAG_AUTOR, TAG_VALORACION = 306, 315, 18246
 TAG_XP_TITULO, TAG_XP_COMENTARIO, TAG_XP_AUTOR, TAG_XP_ETIQUETAS = 0x9C9B, 0x9C9C, 0x9C9D, 0x9C9E
 TAG_EXPOSICION, TAG_APERTURA, TAG_ISO = 33434, 33437, 34855
 TAG_FECHA_ORIGINAL, TAG_FECHA_DIGITALIZADA = 36867, 36868
+TAG_ZONA_ORIGINAL, TAG_ZONA_DIGITALIZADA = 0x9011, 0x9012   # OffsetTime*: "+02:00"
 TAG_FOCAL, TAG_COMENTARIO_USUARIO, TAG_FOCAL_35MM, TAG_OBJETIVO = 37386, 37510, 41989, 42036
 
 # Descripciones "basura" que algunas cámaras escriben por defecto
@@ -48,6 +56,7 @@ NS = {
     "MPReg": "http://ns.microsoft.com/photo/1.2/t/Region#",
     "Iptc4xmpExt": "http://iptc.org/std/Iptc4xmpExt/2008-02-29/",
     "photoshop": "http://ns.adobe.com/photoshop/1.0/",
+    "x": "adobe:ns:meta/",
 }
 XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
 CABECERA_XMP_JPEG = b"http://ns.adobe.com/xap/1.0/\x00"
@@ -213,18 +222,26 @@ def xmp_de(im):
     return None
 
 
+def _fragmento_xmp(xmp):
+    """El x:xmpmeta (o rdf:RDF) del paquete, sin las instrucciones <?xpacket?>; None si
+    no es XML aceptable (nada de DOCTYPE ni entidades)."""
+    texto = xmp.decode("utf-8", "replace") if isinstance(xmp, bytes) else xmp
+    if "<!DOCTYPE" in texto or "<!ENTITY" in texto:
+        return None
+    for apertura, cierre in (("<x:xmpmeta", "</x:xmpmeta>"), ("<rdf:RDF", "</rdf:RDF>")):
+        inicio, fin = texto.find(apertura), texto.rfind(cierre)
+        if inicio >= 0 and fin > inicio:
+            return texto[inicio:fin + len(cierre)]
+    return texto
+
+
 def leer_xmp(xmp) -> dict:
     datos = {"etiquetas": [], "personas": [], "titulo": "", "descripcion": "", "valoracion": 0}
     if not xmp:
         return datos
-    texto = xmp.decode("utf-8", "replace") if isinstance(xmp, bytes) else xmp
-    if "<!DOCTYPE" in texto or "<!ENTITY" in texto:   # nada de entidades XML
+    texto = _fragmento_xmp(xmp)
+    if texto is None:
         return datos
-    for apertura, cierre in (("<x:xmpmeta", "</x:xmpmeta>"), ("<rdf:RDF", "</rdf:RDF>")):
-        inicio, fin = texto.find(apertura), texto.rfind(cierre)
-        if inicio >= 0 and fin > inicio:
-            texto = texto[inicio:fin + len(cierre)]
-            break
     try:
         raiz = ET.fromstring(texto)
     except ET.ParseError:
@@ -302,8 +319,8 @@ def leer_metadatos(ruta: Path, completo: bool = True) -> dict:
     """Metadatos de una foto. Lanza excepción si no se puede abrir como imagen.
 
     Siempre: fecha (y su fuente: exif | nombre | archivo), ancho, alto (ya
-    orientados) y animado. Con `completo`, además: camara, objetivo, exposicion,
-    gps, etiquetas, personas, titulo, descripcion, autor y valoracion (0-5).
+    orientados), animado y gps. Con `completo`, además: camara, objetivo, exposicion,
+    etiquetas, personas, titulo, descripcion, autor y valoracion (0-5).
     """
     with Image.open(ruta) as im:
         exif = im.getexif()
@@ -313,7 +330,8 @@ def leer_metadatos(ruta: Path, completo: bool = True) -> dict:
         datos = {"fecha": fecha_exif(exif), "fuente": "exif", "ancho": ancho, "alto": alto,
                  # MPO (JPEG de Sony, Fujifilm… con vista previa o par 3D) tiene varias
                  # imágenes pero no es una animación: se trata como un JPEG normal
-                 "animado": bool(getattr(im, "is_animated", False)) and im.format != "MPO"}
+                 "animado": bool(getattr(im, "is_animated", False)) and im.format != "MPO",
+                 "gps": gps_exif(exif)}
         if completo:
             sub = exif.get_ifd(IFD_EXIF)
             xmp, iptc = leer_xmp(xmp_de(im)), leer_iptc(im)
@@ -321,7 +339,6 @@ def leer_metadatos(ruta: Path, completo: bool = True) -> dict:
                 camara=camara_exif(exif),
                 objetivo=_texto(sub.get(TAG_OBJETIVO)),
                 exposicion=exposicion_exif(exif),
-                gps=gps_exif(exif),
                 etiquetas=_unicos(xmp["etiquetas"] + iptc.get("etiquetas", [])
                                   + _xp(exif, TAG_XP_ETIQUETAS).split(";")),
                 personas=_unicos(xmp["personas"]),
@@ -352,12 +369,22 @@ _RE_ORIENTACION_XMP = (
 )
 _RE_ANCESTROS = re.compile(
     rb"<photoshop:DocumentAncestors>.*?</photoshop:DocumentAncestors>", re.DOTALL)
+# Fotos con movimiento (Pixel, Samsung): el XMP anuncia un vídeo al final del JPEG y lo
+# localiza con Container:Directory. Al recomprimir ese vídeo desaparece: el anuncio
+# también, o un visor buscaría el vídeo en datos que ya no lo son.
+_RE_FOTO_MOVIMIENTO = (
+    re.compile(r'\s+GCamera:(?:MotionPhoto|MicroVideo)\w*\s*=\s*"[^"]*"'),
+    re.compile(r"<(GCamera:(?:MotionPhoto|MicroVideo)\w*)>[^<]*</\1>"),
+    re.compile(r"<Container:Directory>.*?</Container:Directory>", re.DOTALL),
+)
 
 
 def _xmp_para_guardar(xmp: bytes, formato_pil: str, avisos: list):
     texto = xmp.decode("utf-8", "replace")
     for regex, reemplazo in _RE_ORIENTACION_XMP:   # los píxeles ya están girados
         texto = regex.sub(reemplazo, texto)
+    for regex in _RE_FOTO_MOVIMIENTO:
+        texto = regex.sub("", texto)
     xmp = texto.encode("utf-8")
     if formato_pil == "JPEG" and len(xmp) > MAX_XMP_JPEG:
         xmp = _RE_ANCESTROS.sub(b"", xmp)   # historial de Photoshop: suele ser lo que sobra
@@ -376,25 +403,28 @@ def _segmentos_iptc(im) -> bytes:
     return resultado
 
 
-def parametros_guardado(original, im, formato_pil: str, avisos: list = None) -> dict:
+def parametros_guardado(original, im, formato_pil: str, avisos: list = None,
+                        extra: MetadatosExtra = None) -> dict:
     """Argumentos para `im.save()` que trasladan los metadatos de `original`.
 
     `original` es la imagen tal como se abrió; `im`, la ya girada con
-    ImageOps.exif_transpose (su EXIF ya no lleva orientación).
+    ImageOps.exif_transpose (su EXIF ya no lleva orientación). `extra` (opcional) son
+    metadatos externos que se añaden a los de la foto (ver `MetadatosExtra`).
     """
     avisos = avisos if avisos is not None else []
     kwargs = {}
 
     exif = im.getexif()
     exif.pop(TAG_ORIENTACION, None)   # ya aplicada: evitar doble giro
-    if len(exif):
+    # Ojo: en una foto sin EXIF, la fecha añadida va al sub-IFD y len(exif) sigue a 0
+    if completar_exif(exif, extra) or len(exif):
         kwargs["exif"] = exif
 
     icc = original.info.get("icc_profile")
     if icc and original.mode != "CMYK":   # un perfil CMYK no vale tras pasar a RGB
         kwargs["icc_profile"] = icc
 
-    xmp = xmp_de(original)
+    xmp = completar_xmp(xmp_de(original), extra)
     if xmp:
         xmp = _xmp_para_guardar(xmp, formato_pil, avisos)
         if xmp:
@@ -411,3 +441,211 @@ def parametros_guardado(original, im, formato_pil: str, avisos: list = None) -> 
     elif _segmentos_iptc(original):
         avisos.append("IPTC no se puede guardar en WebP (las etiquetas XMP sí se conservan)")
     return kwargs
+
+
+# ============================= Metadatos externos =============================
+
+def _grados_minutos_segundos(valor: float) -> tuple:
+    valor = abs(valor)
+    grados = int(valor)
+    minutos = int((valor - grados) * 60)
+    segundos = round(((valor - grados) * 60 - minutos) * 60, 4)
+    return (float(grados), float(minutos), segundos)
+
+
+def completar_exif(exif, extra: MetadatosExtra = None) -> bool:
+    """Añade al EXIF la fecha y el GPS de `extra` si la foto no los trae. ¿Ha cambiado?
+
+    La descripción no va al EXIF (ImageDescription es ASCII y perdería los acentos):
+    va al XMP, que es lo primero que se lee.
+    """
+    if extra is None:
+        return False
+    cambiado = False
+    if extra.fecha and fecha_exif(exif) is None:
+        texto = extra.fecha.strftime("%Y:%m:%d %H:%M:%S")
+        sub = exif.get_ifd(IFD_EXIF)
+        sub[TAG_FECHA_ORIGINAL] = sub[TAG_FECHA_DIGITALIZADA] = texto
+        if extra.zona:
+            sub[TAG_ZONA_ORIGINAL] = sub[TAG_ZONA_DIGITALIZADA] = extra.zona
+        cambiado = True
+    if extra.gps and gps_exif(exif) is None:
+        lat, lon, altitud = (tuple(extra.gps) + (None,))[:3]
+        gps = exif.get_ifd(IFD_GPS)
+        gps.clear()
+        gps.update({0: b"\x02\x03\x00\x00", 1: "N" if lat >= 0 else "S",
+                    2: _grados_minutos_segundos(lat), 3: "E" if lon >= 0 else "W",
+                    4: _grados_minutos_segundos(lon)})
+        if altitud:
+            gps[5], gps[6] = (b"\x00" if altitud >= 0 else b"\x01"), round(abs(altitud), 2)
+        cambiado = True
+    return cambiado
+
+
+_XMP_VACIO = ('<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="'
+              + NS["rdf"] + '"><rdf:Description rdf:about=""/></rdf:RDF></x:xmpmeta>')
+_lock_xml = threading.Lock()   # register_namespace es global: no mezclar hilos
+
+
+def completar_xmp(xmp, extra: MetadatosExtra = None):
+    """Paquete XMP con los álbumes, personas, descripción y favorita de `extra` añadidos.
+
+    Etiquetas y personas se suman a las que ya hubiera (sin repetir); la descripción
+    sustituye a la anterior (es la que se escribió en Google Fotos); la favorita es
+    xmp:Rating = 5 si no tenía valoración. El resto del XMP se conserva. Sin nada que
+    añadir, o si el XMP no se puede interpretar, devuelve `xmp` sin tocar.
+    """
+    if extra is None or not extra.aporta_xmp():
+        return xmp
+    fragmento = _fragmento_xmp(xmp) if xmp else _XMP_VACIO
+    if fragmento is None:
+        return xmp
+    try:
+        prefijos = {}
+        for _, (prefijo, uri) in ET.iterparse(io.StringIO(fragmento), events=("start-ns",)):
+            prefijos.setdefault(prefijo, uri)
+        raiz = ET.fromstring(fragmento)
+    except ET.ParseError:
+        return xmp
+    rdf = raiz if raiz.tag == _q("rdf", "RDF") else raiz.find(_q("rdf", "RDF"))
+    if rdf is None:
+        return xmp
+    descripcion = rdf.find(_q("rdf", "Description"))
+    if descripcion is None:
+        descripcion = ET.SubElement(rdf, _q("rdf", "Description"), {_q("rdf", "about"): ""})
+
+    def anadir(propiedad, valores):
+        valores = [v.strip() for v in valores if v and v.strip()]
+        if not valores:
+            return
+        elemento = next(raiz.iter(propiedad), None)
+        if elemento is None:
+            elemento = ET.SubElement(descripcion, propiedad)
+        bolsa = next((h for h in elemento if h.tag in (_q("rdf", "Bag"), _q("rdf", "Seq"))),
+                     None)
+        if bolsa is None:
+            bolsa = ET.SubElement(elemento, _q("rdf", "Bag"))
+        vistos = {(li.text or "").strip().lower() for li in bolsa.iter(_q("rdf", "li"))}
+        for valor in valores:
+            if valor.lower() not in vistos:
+                vistos.add(valor.lower())
+                ET.SubElement(bolsa, _q("rdf", "li")).text = valor
+
+    anadir(_q("dc", "subject"), extra.etiquetas)
+    anadir(_q("Iptc4xmpExt", "PersonInImage"), extra.personas)
+    if extra.descripcion:
+        elemento = next(raiz.iter(_q("dc", "description")), None)
+        if elemento is None:
+            elemento = ET.SubElement(descripcion, _q("dc", "description"))
+        for hijo in list(elemento):
+            elemento.remove(hijo)
+        elemento.text = None
+        alternativa = ET.SubElement(elemento, _q("rdf", "Alt"))
+        ET.SubElement(alternativa, _q("rdf", "li"),
+                      {XML_LANG: "x-default"}).text = extra.descripcion
+    valoracion = _q("xmp", "Rating")
+    if extra.favorita and not any(e.tag == valoracion or valoracion in e.attrib
+                                  for e in raiz.iter()):
+        descripcion.set(valoracion, "5")
+
+    with _lock_xml:
+        for prefijo, uri in list(prefijos.items()) + list(NS.items()):
+            if prefijo:
+                try:
+                    ET.register_namespace(prefijo, uri)
+                except ValueError:
+                    pass   # prefijos "ns0"... reservados: ElementTree pone uno propio
+        cuerpo = ET.tostring(raiz, encoding="unicode")
+    return ('<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>\n'
+            f'{cuerpo}\n<?xpacket end="w"?>').encode("utf-8")
+
+
+# --- JPEG sin recomprimir ---
+
+_SOS, _EOI, _APP0, _APP1, _APP2 = 0xDA, 0xD9, 0xE0, 0xE1, 0xE2
+CABECERA_EXIF_JPEG = b"Exif\x00\x00"
+
+
+def _segmentos_jpeg(datos: bytes):
+    """([(marcador, inicio, fin)] de los segmentos previos a la imagen, inicio de SOS)."""
+    if datos[:2] != b"\xff\xd8":
+        raise ValueError("no es un JPEG")
+    segmentos, pos = [], 2
+    while pos + 4 <= len(datos):
+        if datos[pos] != 0xFF:
+            raise ValueError("estructura JPEG no reconocida")
+        marcador = datos[pos + 1]
+        if marcador == 0xFF:          # relleno
+            pos += 1
+            continue
+        if marcador in (_SOS, _EOI):
+            return segmentos, pos
+        if 0xD0 <= marcador <= 0xD7 or marcador == 0x01:   # sin longitud
+            pos += 2
+            continue
+        fin = pos + 2 + struct.unpack(">H", datos[pos + 2:pos + 4])[0]
+        if fin > len(datos):
+            raise ValueError("JPEG truncado")
+        segmentos.append((marcador, pos, fin))
+        pos = fin
+    raise ValueError("JPEG sin imagen")
+
+
+def _segmento(marcador: int, cuerpo: bytes) -> bytes:
+    return b"\xff" + bytes([marcador]) + struct.pack(">H", len(cuerpo) + 2) + cuerpo
+
+
+def jpeg_con_extra(datos: bytes, extra: MetadatosExtra) -> bytes:
+    """El mismo JPEG, sin recomprimir, con el EXIF y el XMP completados con `extra`.
+
+    Solo se sustituyen (o añaden) los segmentos EXIF y XMP; píxeles, ICC, IPTC, MPF y lo
+    que vaya detrás de la imagen (el vídeo de una foto con movimiento) quedan byte a byte.
+    Lanza ValueError si no se puede hacer sin riesgo.
+    """
+    segmentos, inicio_sos = _segmentos_jpeg(datos)
+    with Image.open(io.BytesIO(datos)) as im:
+        exif, xmp = im.getexif(), xmp_de(im)
+    nuevo_exif = exif.tobytes() if completar_exif(exif, extra) else None
+    nuevo_xmp = completar_xmp(xmp, extra)
+    nuevo_xmp = None if nuevo_xmp == xmp else nuevo_xmp
+    if nuevo_exif is None and nuevo_xmp is None:
+        return datos
+    if nuevo_exif is not None and len(nuevo_exif) > 65533:
+        raise ValueError("EXIF demasiado grande para un segmento JPEG")
+    if nuevo_xmp is not None and len(nuevo_xmp) > MAX_XMP_JPEG:
+        raise ValueError("XMP demasiado grande para un segmento JPEG")
+
+    def tipo(marcador, inicio):
+        cuerpo = datos[inicio + 4:inicio + 4 + len(CABECERA_XMP_JPEG)]
+        if marcador == _APP1 and cuerpo.startswith(CABECERA_EXIF_JPEG):
+            return "exif"
+        if marcador == _APP1 and cuerpo.startswith(CABECERA_XMP_JPEG):
+            return "xmp"
+        if marcador == _APP2 and cuerpo.startswith(b"MPF\x00"):
+            return "mpf"
+        return ""
+
+    tipos = [tipo(m, i) for m, i, _ in segmentos]
+    nuevos = {"exif": nuevo_exif and _segmento(_APP1, nuevo_exif),
+              "xmp": nuevo_xmp and _segmento(_APP1, CABECERA_XMP_JPEG + nuevo_xmp)}
+    # Los que no existían se insertan tras el APP0 (JFIF): primero EXIF, luego XMP
+    por_insertar = [nuevos[t] for t in ("exif", "xmp") if nuevos[t] and t not in tipos]
+    salida, mpf_visto, cambio_tras_mpf = [datos[:2]], False, False
+    for (marcador, inicio, fin), t in zip(segmentos, tipos):
+        if por_insertar and marcador != _APP0:
+            salida += por_insertar
+            por_insertar = []
+            cambio_tras_mpf |= mpf_visto
+        if nuevos.get(t):
+            salida.append(nuevos[t])
+            nuevos[t] = None   # solo el primero (el XMP extendido, si lo hay, se queda)
+            cambio_tras_mpf |= mpf_visto
+        else:
+            salida.append(datos[inicio:fin])
+        mpf_visto |= t == "mpf"
+    salida += por_insertar
+    if cambio_tras_mpf:
+        # MPF guarda la posición de sus imágenes relativa a su propio segmento
+        raise ValueError("JPEG con imágenes MPF antes del EXIF/XMP")
+    salida.append(datos[inicio_sos:])
+    return b"".join(salida)
