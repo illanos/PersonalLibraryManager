@@ -348,12 +348,16 @@ def main(argv=None):
     if args.comando == "fusionar":
         if not hay_pillow():
             sys.exit(MENSAJE_PILLOW)
-        from fusionar import OpcionesFusion, fusionar
+        from fusionar import EspacioInsuficiente, OpcionesFusion, fusionar
         progreso("inicio", "fusionar")
-        progreso("fin", "fusionar", resumen=fusionar(
-            args.coleccion.resolve(), args.destino.resolve(), args.simular, OpcionesFusion(
-                umbral=args.umbral, margen_dias=args.margen_dias, max_lado=args.max_lado_fotos,
-                calidad=args.calidad, hilos=args.hilos, galeria=not args.sin_galeria)))
+        try:
+            resumen = fusionar(
+                args.coleccion.resolve(), args.destino.resolve(), args.simular, OpcionesFusion(
+                    umbral=args.umbral, margen_dias=args.margen_dias, max_lado=args.max_lado_fotos,
+                    calidad=args.calidad, hilos=args.hilos, galeria=not args.sin_galeria))
+        except EspacioInsuficiente as exc:
+            sys.exit(f"ERROR: {exc}")
+        progreso("fin", "fusionar", resumen=resumen)
         return
 
     if args.comando == "galeria":

@@ -870,7 +870,9 @@ function cifras(f, simular) {
       r.omitidos ? c(num(r.omitidos), "omitidos", "mal") : null,
       r.errores ? c(num(r.errores), "errores", "mal") : null,
       r.bytes_anadidos ? c(bytes(r.bytes_anadidos), simular ? "a añadir (aprox.)" : "añadidos") : null,
-      r.bytes_papelera ? c(bytes(r.bytes_papelera), "a la papelera (restaurable)") : null];
+      r.bytes_papelera ? c(bytes(r.bytes_papelera), "a la papelera (restaurable)") : null,
+      simular && r.espacio_libre != null ? c(bytes(r.espacio_libre),
+        r.aviso_espacio ? "libres en el disco: no cabe" : "libres en el disco", r.aviso_espacio ? "mal" : "") : null];
   }
   const n = NOMBRES_FASE[f.fase];
   const algo = ["procesados", "ya_importados", "duplicados", "omitidos", "danados", "errores", "parecidas_omitidas", "descartadas"];

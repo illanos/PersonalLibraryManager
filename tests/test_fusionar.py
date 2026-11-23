@@ -325,6 +325,25 @@ class Fotos(CasoConCarpeta):
         self.assertIn("2024/05-Mayo/20240512_100005.jpg", archivos)
         self.assertIn("QUITADA", self.consola.getvalue())
 
+    def test_sin_espacio_no_copia_nada(self):
+        antes = huella(self.bib)
+        poco = mock.Mock(free=fusionar.MARGEN_DISCO + 10_000)
+        with mock.patch("fusionar.shutil.disk_usage", return_value=poco):
+            stats = self.fusionar(simular=True)
+            self.assertIn("No hay espacio suficiente", stats["aviso_espacio"])
+            self.assertIn("AVISO: No hay espacio", self.consola.getvalue())
+            with self.assertRaisesRegex(fusionar.EspacioInsuficiente, "No se ha copiado nada"):
+                self.fusionar()
+            with self.assertRaises(SystemExit) as salida:
+                main(["fusionar", str(self.col), "--destino", str(self.bib)])
+            self.assertIn("No hay espacio suficiente", str(salida.exception))
+        self.assertEqual({k: v for k, v in huella(self.bib).items() if not k.startswith(".exportador/")},
+                         {k: v for k, v in antes.items() if not k.startswith(".exportador/")})
+        # Con espacio de sobra, no avisa
+        stats = self.fusionar(simular=True)
+        self.assertNotIn("aviso_espacio", stats)
+        self.assertGreater(stats["espacio_necesario"], 0)
+
     def test_umbral_cero_solo_copias_casi_exactas(self):
         stats = self.fusionar(simular=True, umbral=0)
         self.assertGreaterEqual(stats["anadidas"], 5)

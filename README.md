@@ -132,7 +132,8 @@ de la biblioteca, desde la que se pueden restaurar.
 
 Añade a una biblioteca lo que le falta de otra (por ejemplo, la exportación de Google
 Fotos), comparando por días: lo que ya está no se añade y, de dos copias iguales, se queda la
-de más calidad; la peor va a la papelera, desde donde se puede restaurar.
+de más calidad; la peor va a la papelera, desde donde se puede restaurar. Antes de copiar
+comprueba que cabe en el disco (dejando 2 GB libres); si no, no empieza.
 
 ```powershell
 # Simular: el plan completo queda en un CSV para revisarlo en Excel

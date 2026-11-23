@@ -71,6 +71,8 @@ INSTANTES_VIDEO = (0.2, 0.5, 0.8)   # fotogramas que se comparan (fracción de l
 UMBRAL_VIDEO = 8                    # bits (de 128) como máximo en cada fotograma
 MAX_LADO_VIDEO = OpcionesVideos().max_lado
 MOTIVO_DESCARTE = "fusion"          # en la tabla `descartes`: comparada y no añadida
+MARGEN_DISCO = 2 * 1024 ** 3        # libre que debe quedar en el disco (a menudo el del sistema)
+BYTES_MINIATURA = 60 * 1024         # miniatura de la galería por cada foto o vídeo que entra
 _RE_SENT = re.compile(r"(^|[\\/])sent([\\/]|$)", re.IGNORECASE)
 _RE_NOMBRE_BIBLIOTECA = re.compile(r"^\d{8}_")          # 20240512_102030, 20240512_WA0011
 _RE_SUFIJO_RAFAGA = re.compile(r"^(\d{8}_\d{6})_\d{2}$")  # 20240512_102030_01 -> base sin _01
@@ -801,6 +803,33 @@ def _detalle(c: Elemento) -> str:
     return c.motivo
 
 
+class EspacioInsuficiente(Exception):
+    """Lo que hay que añadir no cabe en el disco de la biblioteca: no se copia nada."""
+
+
+def comprobar_espacio(biblioteca: Path, entran: list, stats: dict) -> str:
+    """Anota en `stats` el espacio necesario y el libre; devuelve el problema o "".
+
+    Lo que entra ocupa lo mismo que en la colección (se copia tal cual; lo que se
+    convierte o reduce, menos), más su miniatura. Lo sustituido va a la papelera, en el
+    mismo disco, así que no libera nada. Se exige además MARGEN_DISCO libre al terminar.
+    """
+    necesario = sum(c.bytes + BYTES_MINIATURA for c in entran)
+    try:
+        libre = shutil.disk_usage(biblioteca).free
+    except OSError:
+        return ""
+    stats["espacio_necesario"], stats["espacio_libre"] = necesario, libre
+    if not entran or necesario + MARGEN_DISCO <= libre:
+        return ""
+    problema = (f"No hay espacio suficiente en el disco de {biblioteca}: hacen falta unos "
+                f"{formato_bytes(necesario)} y quedan {formato_bytes(libre)} libres (se dejan "
+                f"al menos {formato_bytes(MARGEN_DISCO)} de margen). Libera espacio o fusiona en "
+                "otro disco.")
+    stats["aviso_espacio"] = problema
+    return problema
+
+
 def nuevas_estadisticas() -> dict:
     return {"fotos": 0, "videos": 0, "anadidas": 0, "sustituidas": 0, "ya_estaban": 0,
             "repetidas": 0, "quitadas": 0, "ya_fusionadas": 0, "ya_comparadas": 0,
@@ -907,6 +936,12 @@ def fusionar(coleccion: Path, biblioteca: Path, simular: bool = False,
                     c.destino_rel = destino.relative_to(biblioteca).as_posix()
                 c.clave = (c.hash_original if c.hash_original and c.hash_original not in hashes_bib
                            else None)
+
+            # ¿Cabe? Antes de copiar nada (y en simulación, como aviso)
+            entran = [c for c in col if c.accion in ("anadir", "sustituir")]
+            problema = comprobar_espacio(biblioteca, entran, stats)
+            if problema and not simular:
+                raise EspacioInsuficiente(problema + " No se ha copiado nada.")
 
             # Lo que no entra: al informe (y al catálogo, para no volver a compararlo)
             escribir = []
@@ -1067,6 +1102,11 @@ def _imprimir_resumen(stats: dict, simular: bool, informe):
               f"{formato_bytes(stats['bytes_anadidos'])}")
     if stats["bytes_papelera"]:
         print(f"{'A la papelera (restaurable)':<32}: {formato_bytes(stats['bytes_papelera'])}")
+    if simular and stats.get("espacio_necesario"):
+        print(f"{'Espacio libre en el disco':<32}: {formato_bytes(stats['espacio_libre'])}"
+              f"  (harán falta unos {formato_bytes(stats['espacio_necesario'])})")
+    if simular and stats.get("aviso_espacio"):
+        print(f"AVISO: {stats['aviso_espacio']}")
     if stats["parecidas"]:
         print("Las parecidas son otras tomas (ráfagas) o fotos editadas: se han añadido; "
               "revísalas en «Limpiar repetidas» de la galería.")

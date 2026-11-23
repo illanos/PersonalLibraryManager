@@ -353,6 +353,10 @@ o cualquier carpeta— sin repetir lo que ya tiene. Lógica en `fusionar.py`.
   galería; solo se reduce (fotos de más de `--max-lado`) o se convierte (HEIC, TIFF, AVI…
   a JPEG o MP4) lo que lo necesita, como al importar. El contenido de WhatsApp va a
   `WhatsApp/`, como siempre.
+- **Espacio en disco**: antes de copiar nada calcula lo que ocupará lo que entra (lo mismo
+  que en la colección, más ~60 KB de miniatura por archivo; lo sustituido va a la papelera
+  del mismo disco y no libera nada). Si no cabe dejando 2 GB libres, no empieza y lo dice;
+  en simulación, el resumen muestra el espacio libre y lo avisa.
 - **Incremental**: lo añadido queda en el catálogo con la colección como origen, y lo
   descartado en `descartes` (motivo `fusion`, con la copia que se queda): una segunda
   fusión solo mira lo nuevo o lo que ha cambiado. Al terminar se actualiza la galería.
