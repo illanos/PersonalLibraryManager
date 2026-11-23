@@ -306,15 +306,18 @@ o cualquier carpeta— sin repetir lo que ya tiene. Lógica en `fusionar.py`.
 - **Mismo original**: si el archivo original tiene el mismo nombre y la misma hora de
   captura (p. ej. `IMG_20160221_115858.jpg` importado del móvil en una y del Takeout en
   la otra), es la misma foto o vídeo aunque cada biblioteca lo haya reducido a su manera
-  (su dHash llega a diferir ~10 bits; se exige ≤ 12 como comprobación). También si el
-  original tiene el mismo MD5 en los dos catálogos, o los archivos son idénticos.
+  (su dHash llega a diferir ~10 bits; se exige ≤ 12 como comprobación) o esté girada 90°
+  en una de las dos (se compara con el archivo girado). El «(1)» que Takeout añade a los
+  nombres repetidos no cuenta. También si el original tiene el mismo MD5 en los dos
+  catálogos, o los archivos son idénticos.
 - **Fotos iguales**, si no: dHash a `--umbral` bits o menos (5 por defecto, lo que separa
   una foto de su copia recomprimida, reducida o reenviada), proporción compatible y, si
   las dos tienen fecha EXIF, exactamente la misma: las tomas de una ráfaga se separan un
   segundo y su dHash puede diferir solo 1-2 bits, pero no son copias, así que se añaden
   (el resumen las cuenta como *parecidas*, para revisarlas luego en *Limpiar repetidas*).
   Se usa el dHash del catálogo (calculado del original) antes que el de la galería (de la
-  miniatura), que casa peor con el de otra biblioteca.
+  miniatura), que casa peor con el de otra biblioteca; si quedan cerca del umbral (6-12
+  bits), decide el dHash calculado de los dos archivos.
 - **Vídeos iguales** (requiere FFmpeg; sin él se omiten): duración casi igual (±1 s o
   ±2 %), proporción compatible y fotogramas parecidos (≤ 8 bits) en los mismos instantes,
   al 20, 50 y 80 % del más corto. Si los fotogramas no se pueden comparar (casi negros),
