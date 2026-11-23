@@ -14,7 +14,7 @@ miniaturas) se guarda y se reutiliza.
 
 ```
 Exportador/
-├── main.py                 Punto de entrada (CLI: fotos, videos, audio, todo, reorganizar, fusionar, galeria)
+├── main.py                 Punto de entrada (CLI: fotos, videos, audio, todo, reorganizar, fusionar, galeria, panel)
 ├── media_utils.py          Utilidades comunes (fechas, nombres, listado, resumen)
 ├── catalogo.py             Catálogo SQLite de lo importado y descartado + informe CSV
 ├── clasificacion.py        WhatsApp, pegatinas y capturas; carpeta de destino de cada cosa
@@ -34,6 +34,9 @@ Exportador/
 ├── galeria_plantilla.html  Interfaz web (HTML + JS sin dependencias)
 ├── limpiar_plantilla.html  Página «Limpiar repetidas» (la sirve servidor.py como limpiar.html)
 ├── servidor.py             Servidor local de la galería (favoritos, caras y limpieza)
+├── panel.py                Panel web: opciones, ejecución y progreso (python main.py panel)
+├── panel.html              Interfaz del panel (HTML + JS sin dependencias)
+├── panel.bat               Abre el panel con doble clic (Windows)
 ├── tests/                  Pruebas automáticas (unittest)
 ├── requirements.txt
 └── ARQUITECTURA.md         Este documento
@@ -63,6 +66,16 @@ python main.py galeria "D:\Biblioteca" --descargar-modelos-caras  # YuNet + SFac
 ```
 
 ## Uso
+
+La forma más cómoda es el **panel web**: doble clic en `panel.bat` o
+
+```powershell
+python main.py panel        # abre http://127.0.0.1:8765/ en el navegador
+```
+
+Ahí se elige qué hacer (importar todo, solo fotos/vídeos/audio, galería o reorganizar), las
+carpetas (con *Examinar…*) y las opciones, y se lanza con **Simular** o **Importar**. Ver
+*El panel web* más abajo. Lo mismo desde la terminal:
 
 ```powershell
 # Todo de una vez: fotos + vídeos + audio + galería. Primero en simulación (no toca nada):
@@ -349,6 +362,36 @@ o cualquier carpeta— sin repetir lo que ya tiene. Lógica en `fusionar.py`.
 - La colección **solo se lee**, y no puede estar dentro de la biblioteca ni al revés.
   Los audios no se fusionan.
 
+## El panel web
+
+`python main.py panel` (o `panel.bat`) levanta un servidor en `http://127.0.0.1:8765/` (solo
+accesible desde tu equipo; si el puerto está ocupado, prueba los siguientes) y abre el navegador.
+
+- **Opciones**: salen del propio `argparse` de `main.py` (valores por defecto, listas, ayudas
+  y validación), así que la web y la línea de comandos nunca se desincronizan. Una opción
+  nueva de la CLI aparece sola en *Otras opciones* hasta que se le dé un sitio en
+  `panel.html`. Debajo del formulario se ve el comando equivalente, para copiarlo.
+- **Comprobación en vivo**: avisa antes de lanzar si la carpeta no existe, si el destino está
+  dentro del origen o si un valor está fuera de rango, y dice qué biblioteca se usará y si ya
+  existe (en ese caso solo se añade lo nuevo).
+- **Ejecución**: cada ejecución es un `python main.py <comando> …` aparte, de una en una.
+  Los módulos emiten eventos de progreso (`media_utils.progreso`, líneas `@@progreso {json}`)
+  solo cuando los lanza el panel (`EXPORTADOR_PROGRESO=1`); en la terminal no cambia nada.
+- **Progreso**: fases (fotos, vídeos, audio, galería…), paso actual (*Analizando*,
+  *Guardando*, *Codificando*, *Miniaturas*, *Caras*…), contador, archivo en curso, tiempo
+  restante estimado, porcentaje de cada vídeo que se está codificando y el porcentaje en el
+  título de la pestaña. Al terminar, resumen por fase (importados, ya estaban, duplicados,
+  dañados, errores, peso antes → después) y botones para abrir la galería o la carpeta, y
+  tras una simulación, para ejecutarlo de verdad con las mismas opciones.
+- **Detener** equivale a Ctrl+C: el programa se detiene en orden (sin `.part` ni FFmpeg en
+  marcha; en Windows se envía Ctrl+Break, que `main.py` trata igual que Ctrl+C). Si no
+  responde en 45 s, se fuerza el cierre.
+- **Registro** completo en directo, con errores y avisos resaltados, filtro y descarga.
+- **Preferencias**: las últimas opciones, carpetas recientes e historial de ejecuciones se
+  guardan en `datos/panel.json`.
+- **Seguridad**: igual que el servidor de la galería (solo `127.0.0.1`, cabeceras `Host` y
+  `Origin` locales) y además exige JSON en los POST, así que ninguna web puede lanzar nada.
+
 ## Pruebas
 
 ```powershell
@@ -360,6 +403,7 @@ falso, así que no necesitan FFmpeg ni OpenCV instalados.
 
 ## Posibles ampliaciones
 
+- Panel accesible desde el móvil en la red local (con contraseña).
 - Editar etiquetas desde la galería y escribirlas en el XMP de la foto.
 - Búsqueda por línea de comandos (`main.py buscar --etiqueta playa --copiar-a ...`).
 - Mapa con las fotos geolocalizadas.

@@ -22,7 +22,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from catalogo import info_por_destino
-from media_utils import CARPETA_GALERIA, fecha_desde_nombre, fecha_mtime, listar_archivos
+from media_utils import (CARPETA_GALERIA, fecha_desde_nombre, fecha_mtime, listar_archivos,
+                         progreso)
 from clasificacion import RE_CAPTURA, ambito, es_pegatina
 import lugares
 from similares import UMBRAL, _proporciones_compatibles, agrupar, con_detalle, dhash
@@ -212,9 +213,13 @@ def construir_indice(carpeta: Path, regenerar: bool = False, hilos: int = 0):
 
     rutas = listar_archivos(carpeta, EXTENSIONES_FOTO | EXTENSIONES_VIDEO | EXTENSIONES_AUDIO)
     hilos = hilos or min(8, os.cpu_count() or 2)
+    resultados = []
     with ThreadPoolExecutor(hilos) as pool:
-        resultados = list(pool.map(
-            lambda r: _elemento(r, carpeta, previos, hay_ffmpeg), rutas))
+        for n, resultado in enumerate(pool.map(
+                lambda r: _elemento(r, carpeta, previos, hay_ffmpeg), rutas), 1):
+            resultados.append(resultado)
+            progreso("avance", "galeria", paso="Miniaturas", hecho=n, total=len(rutas),
+                     archivo=resultado[0]["src"])
 
     grupos = marcar_parecidas([e for e, _ in resultados])
 
@@ -359,6 +364,10 @@ def generar_galeria(carpeta: Path, regenerar: bool = False, caras: bool = False)
     _escribir(carpeta / "galeria.html", PLANTILLA.read_text(encoding="utf-8"))
 
     nuevos = len(elementos) - stats["reutilizados"]
+    progreso("resumen", "galeria", resumen={
+        "fotos": stats["fotos"], "videos": stats["videos"], "audios": stats["audios"],
+        "nuevos": nuevos, "reutilizados": stats["reutilizados"],
+        "grupos_parecidas": stats["grupos_parecidas"]})
     print(f"Galería generada: {stats['fotos']} foto(s), {stats['videos']} vídeo(s) "
           f"y {stats['audios']} audio(s) "
           f"({nuevos} nuevo(s) o modificado(s), {stats['reutilizados']} sin cambios).")

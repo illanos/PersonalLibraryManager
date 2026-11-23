@@ -23,7 +23,7 @@ from media_utils import (
     NOMBRE_ORIGINALES, copiar_atomico, fecha_desde_nombre, fecha_mtime, fecha_y_nombre,
     formato_bytes, hash_archivo,
     imprimir, imprimir_resumen, listar_archivos, nombre_libre, nuevas_estadisticas,
-    parsear_fecha_iso, ruta_temporal, subcarpeta_fecha,
+    parsear_fecha_iso, progreso, ruta_temporal, subcarpeta_fecha,
 )
 
 EXTENSIONES_VIDEO = {
@@ -330,9 +330,10 @@ def detener_ffmpeg():
                 pass
 
 
-def ejecutar_ffmpeg(cmd: list, duracion: float = 0, etiqueta: str = ""):
+def ejecutar_ffmpeg(cmd: list, duracion: float = 0, etiqueta: str = "", video: str = ""):
     """Ejecuta FFmpeg mostrando el porcentaje (si hay etiqueta). Devuelve (ok, error).
 
+    Con `video` (ruta relativa), además avisa del porcentaje al panel web.
     Si se interrumpe (Ctrl+C), mata FFmpeg antes de propagar la interrupción.
     """
     with tempfile.TemporaryFile() as errores:
@@ -341,12 +342,17 @@ def ejecutar_ffmpeg(cmd: list, duracion: float = 0, etiqueta: str = ""):
                                    encoding="utf-8", errors="replace")
         with _lock_procesos:
             _procesos.add(proceso)
+        ultimo = -1
         try:
             for linea in proceso.stdout:
                 clave, _, valor = linea.strip().partition("=")
                 # out_time_ms está en microsegundos (error histórico de FFmpeg)
                 if clave in ("out_time_us", "out_time_ms") and valor.isdigit() and duracion > 0:
-                    _mostrar_progreso(etiqueta, min(100.0, int(valor) / 1e6 / duracion * 100))
+                    porcentaje = min(100.0, int(valor) / 1e6 / duracion * 100)
+                    _mostrar_progreso(etiqueta, porcentaje)
+                    if video and int(porcentaje) != ultimo:
+                        ultimo = int(porcentaje)
+                        progreso("video", "videos", archivo=video, porcentaje=ultimo)
             proceso.wait()
         except BaseException:
             proceso.kill()
@@ -356,6 +362,8 @@ def ejecutar_ffmpeg(cmd: list, duracion: float = 0, etiqueta: str = ""):
             with _lock_procesos:
                 _procesos.discard(proceso)
             _borrar_progreso(etiqueta)
+            if video:
+                progreso("video_fin", "videos", archivo=video)
         errores.seek(0)
         mensaje = errores.read().decode("utf-8", "replace").strip()
     return proceso.returncode == 0, mensaje
@@ -386,16 +394,18 @@ def _codificar(t: _Trabajo, opciones: OpcionesVideos, hw: str, etiqueta: str):
     t.destino.parent.mkdir(parents=True, exist_ok=True)
     t.tmp = ruta_temporal(t.destino)
     duracion = t.info.get("duracion", 0)
+    video = t.rel.as_posix()
     if hw:
         ok, error = ejecutar_ffmpeg(comando_codificacion(t.ruta, t.tmp, opciones, hw),
-                                    duracion, etiqueta)
+                                    duracion, etiqueta, video)
         if ok and t.tmp.exists() and t.tmp.stat().st_size > 0:
             t.hw_usado = hw
             return ok, error
         t.tmp.unlink(missing_ok=True)
         ultima = (error or "sin salida").splitlines()[-1][:120] if error else "sin salida"
         t.aviso_hw = f"{hw} falló ({ultima}); repetido por software"
-    return ejecutar_ffmpeg(comando_codificacion(t.ruta, t.tmp, opciones), duracion, etiqueta)
+    return ejecutar_ffmpeg(comando_codificacion(t.ruta, t.tmp, opciones), duracion, etiqueta,
+                           video)
 
 
 def procesar_videos(origen: Path, destino: Path, simular: bool,
@@ -446,6 +456,8 @@ def procesar_videos(origen: Path, destino: Path, simular: bool,
         for n, ruta in enumerate(archivos, 1):
             rel = ruta.relative_to(origen)
             prefijo = f"  [{n}/{len(archivos)}]"
+            progreso("avance", "videos", paso="Analizando", hecho=n, total=len(archivos),
+                     archivo=rel.as_posix())
             try:
                 st = ruta.stat()
                 fila = catalogo.buscar_por_origen(ruta, st)
@@ -499,6 +511,8 @@ def procesar_videos(origen: Path, destino: Path, simular: bool,
 
         # Fase 2: codificación (varios a la vez con --hilos-video)
         pool = ThreadPoolExecutor(hilos)
+        if trabajos:
+            progreso("avance", "videos", paso="Codificando", hecho=0, total=len(trabajos))
         try:
             futuros = {}
             for t in trabajos:
@@ -507,6 +521,8 @@ def procesar_videos(origen: Path, destino: Path, simular: bool,
             for n, futuro in enumerate(as_completed(futuros), 1):
                 t = futuros[futuro]
                 prefijo = f"  [{n}/{len(trabajos)}]"
+                progreso("avance", "videos", paso="Codificando", hecho=n, total=len(trabajos),
+                         archivo=t.rel.as_posix())
                 try:
                     ok, error = futuro.result()
                     _terminar(t, ok, error, prefijo, destino, carpeta_originales, opciones,
