@@ -6,12 +6,12 @@ from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
-import videos
+from exportador import videos
 from tests.test_videos import CONTENIDO
-from catalogo import Catalogo
-from fotos import OpcionesFotos, procesar_fotos
-from main import main
-from media_utils import fecha_y_nombre, nombre_tiene_hora
+from exportador.catalogo import Catalogo
+from exportador.fotos import OpcionesFotos, procesar_fotos
+from exportador.cli import main
+from exportador.media_utils import fecha_y_nombre, nombre_tiene_hora
 from tests.ayudas import CasoConCarpeta, crear_foto
 
 
@@ -77,8 +77,8 @@ class Importacion(CasoConCarpeta):
         def codificar(cmd, duracion=0, etiqueta="", video=""):
             Path(cmd[-1]).write_bytes(b"x" * 100)
             return True, ""
-        with mock.patch("videos.sondear", return_value=None), \
-                mock.patch("videos.ejecutar_ffmpeg", side_effect=codificar):
+        with mock.patch("exportador.videos.sondear", return_value=None), \
+                mock.patch("exportador.videos.ejecutar_ffmpeg", side_effect=codificar):
             videos.procesar_videos(self.origen, self.bib, False)
         self.assertIn("WhatsApp/2026/01-Enero/20260121_WA0003.mp4", self.archivos(self.bib))
 

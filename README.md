@@ -33,10 +33,14 @@ winget install Gyan.FFmpeg
 # 3. Descarga el proyecto y sus dependencias
 git clone https://github.com/illanos/PersonalLibraryManager.git
 cd PersonalLibraryManager
-pip install -r requirements.txt
+pip install -e ".[todo]"
 ```
 
 Abre una terminal nueva después de instalar FFmpeg para que se reconozca el comando.
+
+`pip install -e ".[todo]"` instala el paquete `exportador` con todas sus dependencias y el
+comando `exportador` (equivale a `python -m exportador`). Con `pip install -e .` se instala
+solo lo imprescindible (Pillow).
 
 ### macOS / Linux
 
@@ -47,7 +51,7 @@ sudo apt install ffmpeg        # Debian / Ubuntu
 git clone https://github.com/illanos/PersonalLibraryManager.git
 cd PersonalLibraryManager
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e ".[todo]"
 ```
 
 ### Dependencias
@@ -55,15 +59,18 @@ pip install -r requirements.txt
 | Paquete | Para qué | ¿Obligatorio? |
 |---|---|---|
 | `Pillow` | Fotos | Sí |
-| `pillow-heif` | Fotos HEIC/HEIF del iPhone | No: sin él se omiten con un aviso |
-| `opencv-python` | Agrupar caras en la galería (`--caras`) | No |
+| `pillow-heif` | Fotos HEIC/HEIF del iPhone (extra `heic`) | No: sin él se omiten con un aviso |
+| `opencv-python` | Agrupar caras en la galería, `--caras` (extra `caras`) | No |
 | FFmpeg | Vídeos y miniaturas de vídeo | Solo para vídeos |
+
+¿Sin instalar el paquete? También vale `pip install -r requirements.txt` y ejecutar los
+comandos desde la carpeta `src` (`cd src`, luego `python -m exportador …`).
 
 Datos opcionales que se descargan **una sola vez** a `datos/` (después todo funciona sin conexión):
 
 ```powershell
-python main.py galeria "D:\Biblioteca" --descargar-lugares        # ciudades (GeoNames), ~3 MB
-python main.py galeria "D:\Biblioteca" --descargar-modelos-caras  # modelos de caras, ~38 MB
+python -m exportador galeria "D:\Biblioteca" --descargar-lugares        # ciudades (GeoNames), ~3 MB
+python -m exportador galeria "D:\Biblioteca" --descargar-modelos-caras  # modelos de caras, ~38 MB
 ```
 
 ## Primeros pasos: el panel web
@@ -71,7 +78,7 @@ python main.py galeria "D:\Biblioteca" --descargar-modelos-caras  # modelos de c
 La forma más cómoda: doble clic en **`panel.bat`** (Windows) o
 
 ```powershell
-python main.py panel
+python -m exportador panel
 ```
 
 Se abre `http://127.0.0.1:8765/` en el navegador. Elige qué hacer (importar todo, solo fotos,
@@ -82,16 +89,17 @@ Debajo del formulario aparece el comando equivalente por si prefieres la termina
 ## Ejemplos de uso desde la terminal
 
 Todos los comandos aceptan `--simular` (muestra qué haría sin tocar nada) y `-h` para ver
-todas sus opciones: `python main.py fotos -h`.
+todas sus opciones: `python -m exportador fotos -h`. Con el paquete instalado, `exportador`
+a secas es lo mismo que `python -m exportador`.
 
 ### Importar todo de una vez
 
 ```powershell
 # Primero, en simulación: no crea ni modifica nada
-python main.py todo "C:\Users\Tu\Pictures\Movil" --destino "D:\Biblioteca" --simular
+python -m exportador todo "C:\Users\Tu\Pictures\Movil" --destino "D:\Biblioteca" --simular
 
 # Fotos + vídeos + notas de voz + galería, y abre la galería al terminar
-python main.py todo "C:\Users\Tu\Pictures\Movil" --destino "D:\Biblioteca" --servir
+python -m exportador todo "C:\Users\Tu\Pictures\Movil" --destino "D:\Biblioteca" --servir
 ```
 
 Sin `--destino`, la biblioteca se crea junto al origen como `<origen>_organizados`.
@@ -100,16 +108,16 @@ Sin `--destino`, la biblioteca se crea junto al origen como `<origen>_organizado
 
 ```powershell
 # Solo fotos, en WebP (~30 % menos peso) y sin la peor copia de cada grupo de casi idénticas
-python main.py fotos "C:\Users\Tu\Pictures\Movil" --destino "D:\Biblioteca" --formato webp --omitir-parecidas
+python -m exportador fotos "C:\Users\Tu\Pictures\Movil" --destino "D:\Biblioteca" --formato webp --omitir-parecidas
 
 # Solo vídeos, en H.265, con la GPU si la hay y dos a la vez
-python main.py videos "C:\Users\Tu\Videos" --destino "D:\Biblioteca" --codec h265 --hw auto --hilos-video 2
+python -m exportador videos "C:\Users\Tu\Videos" --destino "D:\Biblioteca" --codec h265 --hw auto --hilos-video 2
 
 # Notas de voz y audios (se copian sin recomprimir)
-python main.py audio "C:\Users\Tu\Pictures\Movil" --destino "D:\Biblioteca"
+python -m exportador audio "C:\Users\Tu\Pictures\Movil" --destino "D:\Biblioteca"
 
 # Guardar además una copia intacta de cada original en originales/
-python main.py fotos "E:\DCIM" --destino "D:\Biblioteca" --con-originales
+python -m exportador fotos "E:\DCIM" --destino "D:\Biblioteca" --con-originales
 ```
 
 Repetir la importación más adelante (por ejemplo, cada vez que vacías el móvil en la misma
@@ -119,10 +127,10 @@ carpeta) solo procesa lo nuevo.
 
 ```powershell
 # Generar la galería y abrirla en el navegador
-python main.py galeria "D:\Biblioteca" --servir
+python -m exportador galeria "D:\Biblioteca" --servir
 
 # Con detección y agrupación de caras para ponerles nombre (requiere opencv-python)
-python main.py galeria "D:\Biblioteca" --servir --caras
+python -m exportador galeria "D:\Biblioteca" --servir --caras
 ```
 
 Abrir `galeria.html` con doble clic no funciona (el navegador bloquea la lectura de archivos
@@ -138,8 +146,8 @@ como etiquetas. Los JSON no se copian, de las versiones `-editada` se importa so
 y el clip de cada foto con movimiento se importa como vídeo con el mismo nombre que su foto.
 
 ```powershell
-python main.py google "G:\Takeout\Google Fotos" --destino "D:\Google" --simular
-python main.py google "G:\Takeout\Google Fotos" --destino "D:\Google"
+python -m exportador google "G:\Takeout\Google Fotos" --destino "D:\Google" --simular
+python -m exportador google "G:\Takeout\Google Fotos" --destino "D:\Google"
 ```
 
 ### Fusionar otra colección
@@ -155,13 +163,13 @@ no empieza.
 
 ```powershell
 # Simular: el plan completo queda en un CSV para revisarlo en Excel
-python main.py fusionar "D:\Google" --destino "D:\Biblioteca" --simular
+python -m exportador fusionar "D:\Google" --destino "D:\Biblioteca" --simular
 
 # Fusionar de verdad (la colección "D:\Google" solo se lee)
-python main.py fusionar "D:\Google" --destino "D:\Biblioteca"
+python -m exportador fusionar "D:\Google" --destino "D:\Biblioteca"
 
 # Sin tocar los metadatos de lo que ya está, y vídeos hasta 4K
-python main.py fusionar "D:\Google" --destino "D:\Biblioteca" --sin-metadatos --max-lado-video 3840
+python -m exportador fusionar "D:\Google" --destino "D:\Biblioteca" --sin-metadatos --max-lado-video 3840
 ```
 
 ### Reorganizar una biblioteca ya importada
@@ -169,8 +177,8 @@ python main.py fusionar "D:\Google" --destino "D:\Biblioteca" --sin-metadatos --
 ```powershell
 # Separar en WhatsApp/ lo de WhatsApp importado con versiones antiguas y
 # renombrar lo que se importó sin hora (solo mueve archivos dentro de la biblioteca)
-python main.py reorganizar "D:\Biblioteca" --whatsapp --fechas-aproximadas --simular
-python main.py reorganizar "D:\Biblioteca" --whatsapp --fechas-aproximadas
+python -m exportador reorganizar "D:\Biblioteca" --whatsapp --fechas-aproximadas --simular
+python -m exportador reorganizar "D:\Biblioteca" --whatsapp --fechas-aproximadas
 ```
 
 ## Qué se obtiene
@@ -188,20 +196,39 @@ Biblioteca/
 Cada ejecución deja un informe CSV en `.exportador/informes/` (se abre en Excel) con qué se
 hizo con cada archivo.
 
+## Ayuda con Claude Code
+
+El proyecto incluye una *skill* para [Claude Code](https://claude.com/claude-code) en
+`.claude/skills/exportador/`: abre Claude Code en esta carpeta y pídele, en tus palabras,
+lo que quieras hacer («importa las fotos del móvil», «fusiona la biblioteca de Google con la
+principal», «¿por qué esta foto tiene fecha dudosa?»). Conoce todos los comandos y opciones,
+siempre simula primero y no ejecuta nada de verdad sin preguntarte.
+
+## Estructura
+
+```
+src/exportador/   el código (paquete Python) y sus plantillas web
+tests/            pruebas automáticas
+doc/              documentación (ARQUITECTURA.md)
+pyproject.toml    paquete, dependencias y comando `exportador`
+panel.bat         abre el panel con doble clic
+```
+
 ## Pruebas
 
 ```powershell
 python -m unittest discover -s tests -t .
 ```
 
-No necesitan FFmpeg ni OpenCV: los tests de vídeo y de caras los simulan (el único test con
+Desde la raíz del proyecto, sin necesidad de instalar nada más que las dependencias. No
+necesitan FFmpeg ni OpenCV: los tests de vídeo y de caras los simulan (el único test con
 FFmpeg real se salta si no está instalado).
 
 ## Más información
 
-[ARQUITECTURA.md](ARQUITECTURA.md) explica en detalle cada comando y opción, las decisiones
-de diseño (fechas, nombres, metadatos, duplicados, papelera, seguridad del servidor local) y
-la estructura del código.
+[doc/ARQUITECTURA.md](doc/ARQUITECTURA.md) explica en detalle cada comando y opción, las
+decisiones de diseño (fechas, nombres, metadatos, duplicados, papelera, seguridad del servidor
+local) y la organización del código.
 
 ## Licencia
 

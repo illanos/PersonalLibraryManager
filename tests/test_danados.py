@@ -4,10 +4,10 @@ import csv
 import unittest
 from unittest import mock
 
-import fotos
-import videos
-from danados import SIN_CABECERA, TRUNCADO, VACIO, diagnosticar
-from fotos import OpcionesFotos, procesar_fotos
+from exportador import fotos
+from exportador import videos
+from exportador.danados import SIN_CABECERA, TRUNCADO, VACIO, diagnosticar
+from exportador.fotos import OpcionesFotos, procesar_fotos
 from tests.ayudas import CasoConCarpeta, crear_foto
 
 
@@ -110,8 +110,8 @@ class Videos(CasoConCarpeta):
         origen.mkdir()
         (origen / "vacio.mp4").write_bytes(b"")
         (origen / "cortado.mp4").write_bytes(b"\x00\x00\x00\x14ftypisom" + b"x" * 100)
-        with mock.patch("videos.sondear", return_value=None), \
-                mock.patch("videos.ejecutar_ffmpeg", return_value=(False, "moov atom not found")):
+        with mock.patch("exportador.videos.sondear", return_value=None), \
+                mock.patch("exportador.videos.ejecutar_ffmpeg", return_value=(False, "moov atom not found")):
             stats = videos.procesar_videos(origen, bib, False)
         self.assertEqual((stats["danados"], stats["errores"]), (2, 0))
         self.assertTrue(list((bib / ".exportador" / "informes").glob("danados_videos_*.csv")))

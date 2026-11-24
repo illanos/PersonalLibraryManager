@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timezone
 
-from media_utils import (fecha_desde_nombre, listar_archivos, nombre_libre,
+from exportador.media_utils import (fecha_desde_nombre, listar_archivos, nombre_libre,
                          parsear_fecha_iso, subcarpeta_fecha)
 from tests.ayudas import CasoConCarpeta
 

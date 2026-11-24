@@ -10,11 +10,11 @@ from unittest import mock
 
 from PIL import Image
 
-import caras
-import galeria
-import lugares
-from fotos import OpcionesFotos, procesar_fotos
-from servidor import crear_servidor
+from exportador import caras
+from exportador import galeria
+from exportador import lugares
+from exportador.fotos import OpcionesFotos, procesar_fotos
+from exportador.servidor import crear_servidor
 from tests.ayudas import CasoConCarpeta, crear_foto
 
 # Formato de GeoNames (cities15000.txt): 19 columnas separadas por tabuladores
@@ -79,11 +79,11 @@ class Lugares(CasoConCarpeta):
 
     def test_sin_conexion_la_galeria_se_genera_igual(self):
         import urllib.error
-        from main import main
+        from exportador.cli import main
         crear_foto(self.dir / "bib" / "2023" / "IMG_1.jpg")
         sin_red = urllib.error.URLError("sin conexión")
-        with mock.patch("lugares.descargar_lugares", side_effect=sin_red), \
-                mock.patch("caras.descargar_modelos", side_effect=sin_red):
+        with mock.patch("exportador.lugares.descargar_lugares", side_effect=sin_red), \
+                mock.patch("exportador.caras.descargar_modelos", side_effect=sin_red):
             main(["galeria", str(self.dir / "bib"), "--descargar-lugares",
                   "--descargar-modelos-caras"])
         self.assertTrue((self.dir / "bib" / "galeria.html").exists())

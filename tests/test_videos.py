@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
-import videos
+from exportador import videos
 from tests.ayudas import CasoConCarpeta
 
 CONTENIDO = b"\x00\x00\x00\x14ftypqt  " + b"v" * 984   # cabecera MOV válida, 1000 bytes
@@ -27,7 +27,7 @@ PROBE_IPHONE = {
 class Sondeo(unittest.TestCase):
     def test_vertical_fecha_local_camara_y_gps(self):
         salida = subprocess.CompletedProcess([], 0, json.dumps(PROBE_IPHONE), "")
-        with mock.patch("videos.subprocess.run", return_value=salida):
+        with mock.patch("exportador.videos.subprocess.run", return_value=salida):
             info = videos.sondear(Path("x.mov"))
         self.assertEqual((info["ancho"], info["alto"]), (1080, 1920))   # se ve en vertical
         self.assertEqual(info["fecha"], datetime(2024, 5, 12, 10, 20, 30))
@@ -36,7 +36,7 @@ class Sondeo(unittest.TestCase):
         self.assertEqual(info["duracion"], 12.5)
 
     def test_ffprobe_falla(self):
-        with mock.patch("videos.subprocess.run", side_effect=OSError):
+        with mock.patch("exportador.videos.subprocess.run", side_effect=OSError):
             self.assertIsNone(videos.sondear(Path("x.mov")))
 
 
@@ -81,8 +81,8 @@ class Procesamiento(CasoConCarpeta):
             if bytes_salida is not None:
                 Path(cmd[-1]).write_bytes(b"x" * bytes_salida)
             return ok, "" if ok else "Conversion failed!"
-        with mock.patch("videos.sondear", return_value=None), \
-                mock.patch("videos.ejecutar_ffmpeg", side_effect=codificar):
+        with mock.patch("exportador.videos.sondear", return_value=None), \
+                mock.patch("exportador.videos.ejecutar_ffmpeg", side_effect=codificar):
             return videos.procesar_videos(self.origen, self.destino, False,
                                           videos.OpcionesVideos(**opciones))
 
@@ -158,8 +158,8 @@ class FechaDelNombre(CasoConCarpeta):
             Path(cmd[-1]).write_bytes(b"x" * 100)
             return True, ""
         info = {"fecha": datetime(2016, 8, 16, 3, 33, 54), "duracion": 5.0}
-        with mock.patch("videos.sondear", return_value=info), \
-                mock.patch("videos.ejecutar_ffmpeg", side_effect=codificar):
+        with mock.patch("exportador.videos.sondear", return_value=info), \
+                mock.patch("exportador.videos.ejecutar_ffmpeg", side_effect=codificar):
             videos.procesar_videos(origen, self.dir / "bib", False, videos.OpcionesVideos())
         self.assertTrue((self.dir / "bib/2016/08-Agosto/20160812_203028.mp4").exists())
         utc = datetime(2016, 8, 12, 20, 30, 28).astimezone(timezone.utc)

@@ -8,13 +8,13 @@ from pathlib import Path
 
 from PIL import Image
 
-import fusionar
-import galeria
-from fotos import OpcionesFotos, procesar_fotos
-from fusion_metadatos import Datos, aportar, escribir, gana_la_fecha, se_puede_completar
-from fusionar import OpcionesFusion
-from media_utils import MetadatosExtra
-from metadatos import (IFD_EXIF, IFD_GPS, _segmentos_jpeg, completar_exif, completar_xmp,
+from exportador import fusionar
+from exportador import galeria
+from exportador.fotos import OpcionesFotos, procesar_fotos
+from exportador.fusion_metadatos import Datos, aportar, escribir, gana_la_fecha, se_puede_completar
+from exportador.fusionar import OpcionesFusion
+from exportador.media_utils import MetadatosExtra
+from exportador.metadatos import (IFD_EXIF, IFD_GPS, _segmentos_jpeg, completar_exif, completar_xmp,
                        gps_exif, jpeg_con_extra, leer_metadatos, leer_xmp)
 from tests.ayudas import CasoConCarpeta
 from tests.test_fusionar import copia, filas_catalogo, huella

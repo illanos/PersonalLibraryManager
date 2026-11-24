@@ -8,11 +8,11 @@ from unittest import mock
 
 from PIL import Image
 
-import videos
-from fotos import OpcionesFotos, guardar_optimizada, procesar_fotos
-from media_utils import MetadatosExtra, elegir_fecha, metadatos_para_escribir
-from metadatos import completar_xmp, jpeg_con_extra, leer_metadatos, leer_xmp
-from takeout import IndiceTakeout, nombre_album
+from exportador import videos
+from exportador.fotos import OpcionesFotos, guardar_optimizada, procesar_fotos
+from exportador.media_utils import MetadatosExtra, elegir_fecha, metadatos_para_escribir
+from exportador.metadatos import completar_xmp, jpeg_con_extra, leer_metadatos, leer_xmp
+from exportador.takeout import IndiceTakeout, nombre_album
 from tests.ayudas import XMP_PRUEBA, CasoConCarpeta, crear_foto
 
 
@@ -376,7 +376,7 @@ class ImportacionGoogle(CasoConCarpeta):
                          ["fecha"], datetime(2019, 2, 3, 4, 5, 6))
 
     def test_comando_google_en_simulacion_no_crea_nada(self):
-        from main import main
+        from exportador.cli import main
         main(["google", str(self.origen), "--destino", str(self.destino), "--simular"])
         self.assertFalse(self.destino.exists())
         self.assertIn("Editadas (va el original)", self.consola.getvalue())
@@ -427,8 +427,8 @@ class ClipsDeFotosConMovimiento(CasoConCarpeta):
             return True, ""
         info = {"fecha": datetime(2026, 6, 27, 18, 10, 31), "ancho": 1920, "alto": 1080,
                 "duracion": 1.5, "gps": None}
-        with mock.patch("videos.sondear", return_value=info), \
-                mock.patch("videos.ejecutar_ffmpeg", side_effect=ffmpeg):
+        with mock.patch("exportador.videos.sondear", return_value=info), \
+                mock.patch("exportador.videos.ejecutar_ffmpeg", side_effect=ffmpeg):
             videos.procesar_videos(self.origen, self.destino, False,
                                    videos.OpcionesVideos(externos=IndiceTakeout(self.origen)))
         return comandos
@@ -463,7 +463,7 @@ class ClipsDeFotosConMovimiento(CasoConCarpeta):
 
 class FechaIsoRepetida(unittest.TestCase):
     def test_ffmpeg_repite_creation_time(self):
-        from media_utils import parsear_fecha_iso
+        from exportador.media_utils import parsear_fecha_iso
         fecha = parsear_fecha_iso("2024-05-12T08:20:30.000000Z;2024-05-12T08:20:30.000000Z")
         self.assertIsNotNone(fecha)
 

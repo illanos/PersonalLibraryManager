@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import videos
-from main import construir_parser, opciones_videos
+from exportador import videos
+from exportador.cli import construir_parser, opciones_videos
 from tests.ayudas import CasoConCarpeta
 from tests.test_videos import CONTENIDO
 
@@ -37,12 +37,12 @@ class Deteccion(unittest.TestCase):
         videos._cache_hw.clear()
 
     def test_auto_elige_la_primera_que_funciona(self):
-        with mock.patch("videos.subprocess.run", side_effect=ffmpeg_falso({"h264_qsv"})):
+        with mock.patch("exportador.videos.subprocess.run", side_effect=ffmpeg_falso({"h264_qsv"})):
             self.assertEqual(videos.detectar_hw(), ["qsv"])   # nvenc listado pero sin GPU
             self.assertEqual(videos.elegir_hw("auto", "h264"), ("qsv", ""))
 
     def test_pedida_no_disponible_avisa_y_usa_software(self):
-        with mock.patch("videos.subprocess.run", side_effect=ffmpeg_falso(set())):
+        with mock.patch("exportador.videos.subprocess.run", side_effect=ffmpeg_falso(set())):
             familia, aviso = videos.elegir_hw("amf", "h264")
         self.assertIsNone(familia)
         self.assertIn("software", aviso)
@@ -94,9 +94,9 @@ class Procesamiento(CasoConCarpeta):
         return ejecutar
 
     def procesar(self, falla_hw=False, **op):
-        with mock.patch("videos.sondear", return_value=None), \
-                mock.patch("videos.elegir_hw", return_value=("nvenc", "")), \
-                mock.patch("videos.ejecutar_ffmpeg", side_effect=self.codificar(falla_hw)):
+        with mock.patch("exportador.videos.sondear", return_value=None), \
+                mock.patch("exportador.videos.elegir_hw", return_value=("nvenc", "")), \
+                mock.patch("exportador.videos.ejecutar_ffmpeg", side_effect=self.codificar(falla_hw)):
             return videos.procesar_videos(self.origen, self.destino, False,
                                           videos.OpcionesVideos(**op))
 
