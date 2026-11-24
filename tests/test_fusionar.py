@@ -70,6 +70,29 @@ class Calidad(unittest.TestCase):
         self.assertEqual(comparar(foto("a", bytes_=105_000), foto("b")),
                          (0, "copias equivalentes"))
 
+    def test_del_mismo_original_el_peso_no_cuenta_salvo_si_es_el_original(self):
+        # Dos exportaciones del mismo archivo (mismo MD5 del original): una pesa más solo
+        # por cómo se recomprimió
+        pesada = foto("a", lado="c", bytes_=150_000, hash_original="h1", tamano_original=400_000)
+        ligera = foto("b", bytes_=100_000, hash_original="h1", tamano_original=400_000)
+        self.assertEqual(comparar(pesada, ligera), (0, "copias equivalentes"))
+        # Con el mismo nombre y hora, sí: una puede venir de una versión recomprimida
+        por_nombre = foto("a", lado="c", bytes_=150_000, nombre_original="img_0001")
+        self.assertEqual(comparar(por_nombre, foto("b", nombre_original="img_0001"))[1],
+                         "más peso (menos comprimida)")
+        # La que es el original tal cual (mismo tamaño y MD5) gana, pese a todo
+        original = foto("a", lado="c", bytes_=400_000, hash_original="h1",
+                        tamano_original=400_000, md5="h1")
+        self.assertEqual(comparar(original, ligera), (1, "es el original, sin recomprimir"))
+        self.assertEqual(comparar(ligera, original), (-1, "es el original, sin recomprimir"))
+        # ... salvo que vaya a entrar recomprimida (más grande que el límite)
+        original.convertir = True
+        self.assertEqual(comparar(original, ligera)[0], 0)
+        # Mismo tamaño pero otro contenido: no es el original
+        impostora = foto("a", lado="c", bytes_=400_000, hash_original="h1",
+                         tamano_original=400_000, md5="otro")
+        self.assertEqual(comparar(impostora, ligera)[0], 0)
+
     def test_lo_que_se_reduce_al_anadir_cuenta_reducido(self):
         grande = foto("a", lado="c", ancho=4000, alto=3000, bytes_=9_000_000, convertir=True)
         en_biblioteca = foto("b", ancho=3200, alto=2400)
@@ -176,6 +199,20 @@ class ConArchivos(CasoConCarpeta):
         for k, v in extra.items():
             setattr(e, k, v)
         return e
+
+    def test_dos_exportaciones_del_mismo_original_no_se_sustituyen_por_peso(self):
+        # La de Google se exportó a más calidad (pesa más); las dos salen del mismo archivo
+        movil, bib, google = self.dir / "movil", self.dir / "bib", self.dir / "google"
+        escena(movil / "IMG_0001.jpg", 1, tam=(1600, 1200), calidad=95,
+               fecha="2024:05:12 10:00:00")
+        procesar_fotos(movil, bib, False, OpcionesFotos(hilos=2, calidad=70))
+        procesar_fotos(movil, google, False, OpcionesFotos(hilos=2, calidad=95))
+        rel = "2024/05-Mayo/20240512_100000.jpg"
+        self.assertGreater((google / rel).stat().st_size, 1.1 * (bib / rel).stat().st_size)
+        stats = fusionar.fusionar(google, bib, True, OpcionesFusion(hilos=2))
+        self.assertEqual((stats["sustituidas"], stats["ya_estaban"]), (0, 1))
+        self.assertIn("mismo original); son equivalentes", self.consola.getvalue())
+        Path(stats["informe"]).unlink()
 
     def test_mismo_original_girado_y_con_el_1_de_takeout(self):
         self.assertEqual(fusionar.normalizar_nombre("DSCN0169(1)"), "dscn0169")

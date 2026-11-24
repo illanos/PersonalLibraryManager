@@ -117,6 +117,7 @@ class Elemento:
     whatsapp: bool = False
     sent: bool = False
     hash_original: str = None       # MD5 del original según su catálogo
+    tamano_original: int = 0        # y su tamaño en bytes
     nombre_original: str = ""       # nombre (sin extensión, en minúsculas) del archivo original
     animado: bool = False
     st: os.stat_result = None
@@ -172,6 +173,23 @@ def _peso_comparable(a: Elemento, b: Elemento) -> bool:
     return not (a.lado == "c" and a.convertir) and not (b.lado == "c" and b.convertir)
 
 
+def mismo_original(a: Elemento, b: Elemento) -> bool:
+    """¿Se hicieron las dos del mismo archivo? (El MD5 del original en los dos catálogos.)
+    Con el mismo nombre y hora no basta: una puede salir de una versión recomprimida
+    (p. ej. la de «ahorro de espacio» de Google Fotos), y ahí el peso sí dice algo."""
+    return bool(a.hash_original and a.hash_original == b.hash_original)
+
+
+def es_el_original(e: Elemento) -> bool:
+    """¿Es el original tal cual, sin recomprimir? Pesa lo mismo que el original según su
+    catálogo y lo confirma el MD5 (solo se calcula entonces)."""
+    if not (e.hash_original and e.tamano_original) or e.bytes != e.tamano_original:
+        return False
+    if e.lado == "c" and e.convertir:   # entraría recomprimida
+        return False
+    return _md5(e) == e.hash_original
+
+
 def comparar(a: Elemento, b: Elemento, max_lado: int = MAX_LADO,
              max_lado_video: int = MAX_LADO_VIDEO) -> tuple:
     """(>0 si `a` es mejor que `b`, <0 si es peor, 0 si equivalen; motivo legible).
@@ -180,6 +198,9 @@ def comparar(a: Elemento, b: Elemento, max_lado: int = MAX_LADO,
     Vídeos: resolución, no WhatsApp, bitrate, metadatos de cámara.
     Las diferencias pequeñas (±5 % de píxeles, ±10 % de peso) no cuentan. La resolución
     es la que tendrá en la biblioteca: lo que pase del límite cuenta ya reducido.
+    Entre dos copias hechas del mismo archivo (mismo MD5 del original) y con la misma
+    resolución, el peso no dice nada (solo cómo se recomprimió cada una): gana la que sea
+    el original tal cual, si alguna lo es; si no, equivalen.
     """
     pa, pb = pixeles(a, max_lado, max_lado_video), pixeles(b, max_lado, max_lado_video)
     mayor = max(pa, pb)
@@ -195,20 +216,31 @@ def comparar(a: Elemento, b: Elemento, max_lado: int = MAX_LADO,
             return 1
         return -1 if vb > va * (1 + MARGEN_PESO) else 0
 
+    comparable = _peso_comparable(a, b)
+    del_mismo = comparable and mismo_original(a, b)
+
+    def original():
+        if not del_mismo:
+            return 0
+        oa, ob = es_el_original(a), es_el_original(b)
+        return 0 if oa == ob else (1 if oa else -1)
+
     if a.tipo == "foto":
         criterios = [
             ("tiene EXIF de cámara", lambda: bandera("camara", True)),
             ("no viene de WhatsApp", lambda: bandera("whatsapp", False)),
             ("no es la copia enviada (Sent)", lambda: bandera("sent", False)),
+            ("es el original, sin recomprimir", original),
             ("más peso (menos comprimida)", lambda: mayor_con_margen(a.bytes, b.bytes)
-             if _peso_comparable(a, b) else 0),
+             if comparable and not del_mismo else 0),
         ]
     else:
         criterios = [
             ("no viene de WhatsApp", lambda: bandera("whatsapp", False)),
+            ("es el original, sin recomprimir", original),
             ("más bitrate (menos comprimido)", lambda: mayor_con_margen(
                 a.bytes / a.duracion, b.bytes / b.duracion)
-             if _peso_comparable(a, b) and a.duracion > 0 and b.duracion > 0 else 0),
+             if comparable and not del_mismo and a.duracion > 0 and b.duracion > 0 else 0),
             ("tiene metadatos de cámara", lambda: bandera("camara", True)),
         ]
     for motivo, criterio in criterios:
@@ -511,6 +543,7 @@ def leer_elemento(ruta: Path, carpeta: Path, lado: str, fila=None, previo: dict 
     fila = dict(fila) if fila else {}
     origen = fila.get("origen") or ""
     e.hash_original = fila.get("hash")
+    e.tamano_original = int(fila.get("tamano") or 0)
     e.nombre_original = normalizar_nombre(Path(origen).stem if origen else ruta.stem)
     e.fecha, e.fuente = _fecha_iso(fila.get("fecha")), fila.get("fuente_fecha") or ""
     if not e.fecha:

@@ -407,8 +407,16 @@ o cualquier carpeta— sin repetir lo que ya tiene. Lógica en `fusionar.py`.
   no se dan por iguales.
 - **Se queda la de más calidad**. Fotos: más resolución (si difieren más de un 5 %; lo
   que pasa del límite de la exportación cuenta ya reducido, como quedará en la
-  biblioteca), EXIF de cámara, no WhatsApp, no la enviada (`Sent/`), más peso (+10 %). Vídeos: resolución, no WhatsApp, más bitrate
-  (+10 %), metadatos de cámara. Si empatan, se queda la de la biblioteca.
+  biblioteca), EXIF de cámara, no WhatsApp, no la enviada (`Sent/`), más peso (+10 %).
+  Vídeos: resolución, no WhatsApp, más bitrate (+10 %), metadatos de cámara. Si
+  empatan, se queda la de la biblioteca.
+  - Entre dos copias hechas del mismo archivo (el mismo MD5 del original en los dos
+    catálogos) y con la misma resolución, el peso (o el bitrate) no cuenta: solo dice
+    cómo se recomprimió cada una (p. ej. una biblioteca exportada antes de topar la
+    calidad a la del original pesa más sin ser mejor). Gana la que sea el original tal
+    cual (mismo tamaño y MD5 que el original); si ninguna lo es, se queda la de la
+    biblioteca. Con el mismo nombre y hora sí cuenta: una puede venir de una versión
+    recomprimida (el «ahorro de espacio» de Google Fotos).
   - La de la biblioteca es igual o mejor: la de la colección no se añade.
   - La de la colección es mejor: entra y la otra va a la **papelera** de la biblioteca
     (restaurable desde *Limpiar repetidas*, también los vídeos). Si las dos van a la misma
