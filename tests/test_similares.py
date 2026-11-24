@@ -56,6 +56,34 @@ class Hash(CasoConCarpeta):
         h = f"{int('f0' * 16, 16):032x}"
         self.assertEqual(agrupar({"a": h, "b": h}, {"a": 1.33, "b": 0.56}), [])
 
+    def test_agrupar_da_lo_mismo_que_comparar_todas_con_todas(self):
+        import random
+        from exportador.similares import UMBRAL, con_detalle
+        azar = random.Random(3)
+        bases = [azar.getrandbits(128) for _ in range(30)]
+        hashes = {}
+        for i in range(300):   # familias de hashes a pocos bits unos de otros
+            h = azar.choice(bases)
+            for _ in range(azar.randint(0, 14)):
+                h ^= 1 << azar.randrange(128)
+            hashes[f"f{i}"] = f"{h:032x}"
+        claves = [c for c, h in hashes.items() if con_detalle(h)]
+        padre = {c: c for c in claves}
+
+        def raiz(c):
+            while padre[c] != c:
+                c = padre[c]
+            return c
+        for i, a in enumerate(claves):
+            for b in claves[i + 1:]:
+                if distancia(hashes[a], hashes[b]) <= UMBRAL:
+                    padre[raiz(b)] = raiz(a)
+        esperado = {}
+        for c in claves:
+            esperado.setdefault(raiz(c), []).append(c)
+        self.assertEqual(sorted(sorted(g) for g in agrupar(hashes)),
+                         sorted(sorted(g) for g in esperado.values() if len(g) > 1))
+
 
 class Importacion(CasoConCarpeta):
     def setUp(self):
@@ -156,6 +184,50 @@ class Galeria(CasoConCarpeta):
         with mock.patch.object(galeria, "dhash", side_effect=AssertionError("recalcula")):
             elementos, _ = galeria.construir_indice(bib)
         self.assertEqual(sum("parecidas" in e for e in elementos), 2)
+
+    def test_al_regenerar_solo_se_rehacen_los_grupos_que_cambian(self):
+        # Error anterior: abrir la galería de 43.000 fotos sin cambios tardaba más de 2
+        # minutos, casi todo en volver a comparar todas las fotos entre sí
+        from unittest import mock
+        bib = self.dir / "bib"
+        a = escena(bib / "2024" / "a.jpg", 5)
+        with Image.open(a) as im:
+            im.resize((640, 480)).save(bib / "2024" / "b.jpg", quality=50)
+        c = escena(bib / "2024" / "c.jpg", 6)
+        galeria.generar_galeria(bib)
+
+        def grupos():
+            datos = json.loads((bib / "galeria.json").read_text(encoding="utf-8"))
+            por_numero = {}
+            for e in datos["elementos"]:
+                if e.get("parecidas"):
+                    por_numero.setdefault(e["parecidas"], []).append(e["src"].split("/")[-1])
+            return sorted(sorted(g) for g in por_numero.values())
+
+        def regenerar_sin_comparar_todas():
+            with mock.patch.object(galeria, "marcar_parecidas",
+                                   side_effect=AssertionError("compara todas")):
+                galeria.generar_galeria(bib)
+
+        regenerar_sin_comparar_todas()                       # nada ha cambiado
+        self.assertEqual(grupos(), [["a.jpg", "b.jpg"]])
+        with Image.open(c) as im:                            # llega una copia de c
+            im.resize((600, 450)).save(bib / "2024" / "d.jpg", quality=55)
+        regenerar_sin_comparar_todas()
+        self.assertEqual(grupos(), [["a.jpg", "b.jpg"], ["c.jpg", "d.jpg"]])
+        (bib / "2024" / "b.jpg").unlink()                    # se va la copia de a
+        regenerar_sin_comparar_todas()
+        self.assertEqual(grupos(), [["c.jpg", "d.jpg"]])
+
+        # Un galeria.json de otra versión (sin el criterio de sus grupos) se rehace entero
+        datos = json.loads((bib / "galeria.json").read_text(encoding="utf-8"))
+        del datos["criterio_parecidas"]
+        (bib / "galeria.json").write_text(json.dumps(datos), encoding="utf-8")
+        with mock.patch.object(galeria, "marcar_parecidas",
+                               wraps=galeria.marcar_parecidas) as completo:
+            galeria.generar_galeria(bib)
+        completo.assert_called_once()
+        self.assertEqual(grupos(), [["c.jpg", "d.jpg"]])
 
 
 if __name__ == "__main__":

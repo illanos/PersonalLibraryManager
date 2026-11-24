@@ -389,7 +389,12 @@ Se conservan al exportar y aparecen en la galería al regenerarla.
 
 Regenerar es incremental: lo que no ha cambiado reutiliza metadatos, miniatura, hash
 perceptual y lugar; las caras se guardan en `_galeria/caras.sqlite` y cada foto se analiza
-una sola vez.
+una sola vez. Los grupos de *Parecidas* también: solo se rehacen los que tocan fotos
+nuevas, cambiadas o que ya no están (`galeria.json` guarda con qué umbral se calcularon; si
+cambia, o con `--regenerar`, se rehacen todos). Para saber qué ha cambiado basta una
+lectura de cada carpeta (tamaño y fecha de cada archivo, y qué miniaturas hay), sin abrir
+nada. Con 45.800 archivos sin cambios, abrir la galería pasó de 2 min 15 s (comparando las
+43.000 fotos entre sí en cada arranque) a unos 7 s.
 
 El servidor admite peticiones parciales (para saltar en los vídeos y para Safari), rechaza
 cabeceras `Host` que no sean locales (protección frente a *DNS rebinding*) y, si el puerto
