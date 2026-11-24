@@ -272,6 +272,8 @@ class MetadatosExtra:
 
     Al exportar se añade a la foto o al vídeo lo que le falte: la fecha y el GPS solo
     si no los trae; etiquetas y personas se suman; la descripción manda sobre la suya.
+    También sirve para pasar los metadatos de una copia a otra al fusionar colecciones
+    (fusion_metadatos.py): título, valoración y etiquetas EXIF sueltas (cámara...).
     """
     fecha: datetime = None           # hora local de captura
     zona: str = ""                   # desfase de `fecha` respecto a UTC ("+02:00"); "" = no se sabe
@@ -283,9 +285,15 @@ class MetadatosExtra:
     etiquetas: list = field(default_factory=list)   # álbumes de Google Fotos
     personas: list = field(default_factory=list)
     favorita: bool = False
+    titulo: str = ""                 # sustituye al suyo, como la descripción
+    valoracion: int = 0              # 1-5: se pone si la foto no tiene una mayor
+    # {(ifd, etiqueta): valor} EXIF que se añaden si la foto no los tiene (ifd 0 = el
+    # principal); las del GPS van juntas: todas si la foto no tiene ubicación
+    exif: dict = field(default_factory=dict)
 
     def aporta_xmp(self) -> bool:
-        return bool(self.etiquetas or self.personas or self.descripcion or self.favorita)
+        return bool(self.etiquetas or self.personas or self.descripcion or self.favorita
+                    or self.titulo or self.valoracion)
 
     def combinar(self, otro: "MetadatosExtra") -> "MetadatosExtra":
         """Junta los de dos copias idénticas del mismo archivo (p. ej. la de un álbum y la
@@ -300,7 +308,10 @@ class MetadatosExtra:
                        descripcion=self.descripcion or otro.descripcion,
                        etiquetas=unir(self.etiquetas, otro.etiquetas),
                        personas=unir(self.personas, otro.personas),
-                       favorita=self.favorita or otro.favorita)
+                       favorita=self.favorita or otro.favorita,
+                       titulo=self.titulo or otro.titulo,
+                       valoracion=max(self.valoracion, otro.valoracion),
+                       exif={**otro.exif, **self.exif})
 
 
 def elegir_fecha(ruta: Path, fecha: datetime, fuente: str, extra: MetadatosExtra = None):

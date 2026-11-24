@@ -391,7 +391,8 @@ const SECCIONES = [
   { id: "comparar", titulo: "Cómo comparar", para: ["fusionar"],
     campos: ["umbral", "margen_dias"] },
   { id: "anadir", titulo: "Lo que se añade", para: ["fusionar"],
-    campos: ["max_lado_fotos", "calidad", "hilos", "sin_galeria"] },
+    campos: ["max_lado_fotos", "max_lado_video", "calidad", "hilos", "sin_metadatos", "sin_galeria"],
+    etiquetas: { max_lado_fotos: "Límite de las fotos (lado largo)", max_lado_video: "Límite de los vídeos (lado largo)" } },
 ];
 const CAMPOS = {
   formato: { etiqueta: "Formato", lista: { jpeg: "JPEG (universal)", webp: "WebP (~30 % menos peso)" } },
@@ -410,6 +411,7 @@ const CAMPOS = {
   renombrar_aproximadas: { etiqueta: "Renombrar fechas aproximadas ya importadas" },
   sin_audio: { etiqueta: "No importar audio" },
   sin_galeria: { etiqueta: "No generar la galería al terminar" },
+  sin_metadatos: { etiqueta: "No pasar los metadatos de una copia a otra" },
   caras: { etiqueta: "Detectar y agrupar caras" },
   descargar_lugares: { etiqueta: "Descargar ciudades (una vez, ~3 MB)" },
   descargar_modelos_caras: { etiqueta: "Descargar modelos de caras (una vez, ~38 MB)" },
@@ -557,7 +559,8 @@ function pintarSecciones() {
     const contenido = crear("div", { class: "contenido" });
     for (const dest of s.campos) {
       const op = definicion(dest);
-      if (op) contenido.append(Object.assign(control(op, CAMPOS[dest] || {}, `s-${s.id}`), { _dest: dest }));
+      const cfg = { ...(CAMPOS[dest] || {}), ...(s.etiquetas && s.etiquetas[dest] ? { etiqueta: s.etiquetas[dest] } : {}) };
+      if (op) contenido.append(Object.assign(control(op, cfg, `s-${s.id}`), { _dest: dest }));
     }
     const det = crear("details", { class: "seccion", dataset: { seccion: s.id, para: (s.para || []).join(" ") },
                                    open: s.abierta || abiertas.includes(s.id) },
@@ -641,7 +644,9 @@ function resumirSecciones() {
     galeria: [ d("caras") && "caras", d("regenerar") && "regenerar", (d("descargar_lugares") || d("descargar_modelos_caras")) && "descargas" ],
     reorganizar: [ d("whatsapp") && "WhatsApp", d("fechas_aproximadas") && "fechas aproximadas" ],
     comparar: [ `≤ ${v.umbral} bits`, +v.margen_dias ? `±${v.margen_dias} día${+v.margen_dias === 1 ? "" : "s"}` : "solo el mismo día" ],
-    anadir: [ +v.max_lado_fotos ? `fotos hasta ${v.max_lado_fotos} px` : "fotos sin reducir", d("sin_galeria") && "sin galería" ],
+    anadir: [ +v.max_lado_fotos ? `fotos hasta ${v.max_lado_fotos} px` : "fotos sin reducir",
+              +v.max_lado_video ? `vídeos hasta ${v.max_lado_video} px` : "vídeos sin reducir",
+              d("sin_metadatos") ? "sin pasar metadatos" : "fusiona metadatos", d("sin_galeria") && "sin galería" ],
   };
   for (const det of $$("details.seccion")) {
     const partes = (txt[det.dataset.seccion] || []).filter(Boolean);
@@ -863,6 +868,7 @@ function cifras(f, simular) {
     return [c(num(r.anadidas), simular ? "nuevas a añadir" : "nuevas añadidas", "principal"),
       c(num(r.sustituidas), simular ? "mejores (sustituirían)" : "mejores (sustituyen)"),
       c(num(r.ya_estaban), "ya estaban (igual o mejor)"),
+      r.metadatos ? c(num(r.metadatos), simular ? "ganarían metadatos de otra copia" : "con metadatos de otra copia") : null,
       r.repetidas ? c(num(r.repetidas), "repetidas en la colección") : null,
       r.quitadas ? c(num(r.quitadas), "quitadas antes a mano") : null,
       r.parecidas ? c(num(r.parecidas), "parecidas (revísalas)") : null,

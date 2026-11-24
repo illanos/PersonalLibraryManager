@@ -28,6 +28,7 @@ Exportador/
 ├── takeout.py              Google Fotos (Takeout): cada archivo con su JSON y sus álbumes
 ├── reorganizar.py          Ordenar una biblioteca ya importada (solo dentro de ella)
 ├── fusionar.py             Añadir otra colección a la biblioteca sin repetir (por días, la mejor copia)
+├── fusion_metadatos.py     Al fusionar: la copia que se queda gana los metadatos de las otras
 ├── galeria.py              Índice de la galería y miniaturas
 ├── lugares.py              Lugar a partir del GPS, sin conexión (GeoNames)
 ├── caras.py                Detección y agrupación local de caras (OpenCV, opcional)
@@ -130,7 +131,9 @@ Opciones principales (`python main.py <comando> -h` para verlas todas):
 | `--whatsapp`, `--fechas-aproximadas` | reorganizar | Qué reordenar en una biblioteca ya importada |
 | `--umbral N` | fusionar | Bits (0-12) para que dos fotos sean la misma (5: copias recomprimidas o reducidas) |
 | `--margen-dias N` | fusionar | Días antes y después con los que se compara (1; `0` = solo el mismo día) |
-| `--max-lado`, `--calidad` | fusionar | Solo para lo que hay que reducir o convertir al añadir (3200, 88) |
+| `--max-lado`, `--calidad` | fusionar | Límite de la exportación en fotos: lo que pasa se exporta reducido (3200, 88) |
+| `--max-lado-video N` | fusionar | Límite de la exportación en vídeos: lo que pasa se recodifica (1920; `0` = tal cual) |
+| `--sin-metadatos` | fusionar | No pasar los metadatos de una copia a la que se queda |
 | `--sin-galeria` | fusionar | No actualizar la galería de la biblioteca al terminar |
 
 ## Resultado
@@ -403,8 +406,8 @@ o cualquier carpeta— sin repetir lo que ya tiene. Lógica en `fusionar.py`.
   al 20, 50 y 80 % del más corto. Si los fotogramas no se pueden comparar (casi negros),
   no se dan por iguales.
 - **Se queda la de más calidad**. Fotos: más resolución (si difieren más de un 5 %; lo
-  que se va a reducir al añadirlo cuenta ya reducido), EXIF de cámara, no WhatsApp, no la
-  enviada (`Sent/`), más peso (+10 %). Vídeos: resolución, no WhatsApp, más bitrate
+  que pasa del límite de la exportación cuenta ya reducido, como quedará en la
+  biblioteca), EXIF de cámara, no WhatsApp, no la enviada (`Sent/`), más peso (+10 %). Vídeos: resolución, no WhatsApp, más bitrate
   (+10 %), metadatos de cámara. Si empatan, se queda la de la biblioteca.
   - La de la biblioteca es igual o mejor: la de la colección no se añade.
   - La de la colección es mejor: entra y la otra va a la **papelera** de la biblioteca
@@ -415,10 +418,38 @@ o cualquier carpeta— sin repetir lo que ya tiene. Lógica en `fusionar.py`.
   - Dentro de la propia colección tampoco se repite nada: de varias copias entra la mejor.
   - Lo igual a una foto que se quitó antes con *Limpiar repetidas* (está en la papelera o
     su original en `descartadas`) no vuelve.
-- **Sin recomprimir**: lo que entra se copia tal cual si ya está en un formato de la
-  galería; solo se reduce (fotos de más de `--max-lado`) o se convierte (HEIC, TIFF, AVI…
-  a JPEG o MP4) lo que lo necesita, como al importar. El contenido de WhatsApp va a
-  `WhatsApp/`, como siempre.
+- **El límite de la exportación**: lo que entra (nuevo o mejor que otra) se copia tal
+  cual, sin recomprimir, si está en un formato de la galería y dentro del límite; si lo
+  pasa (fotos de más de `--max-lado` px, 3200; vídeos de más de `--max-lado-video`, 1920),
+  se exporta como al importar: reducido y recomprimido. También se convierte lo que no
+  está en un formato de la galería (HEIC, TIFF, AVI… a JPEG o MP4). Así un 4K de la
+  colección no entra en 4K ni gana a la copia a 1080p por resolución: cuenta ya reducido.
+  El contenido de WhatsApp va a `WhatsApp/`, como siempre.
+- **Metadatos** (`fusion_metadatos.py`; `--sin-metadatos` para no tocarlos): de dos (o
+  más) copias iguales, la que se queda gana lo que saben las otras, metadato a metadato,
+  quedándose siempre con el que más información tiene:
+  - Fotos: ubicación (el GPS entero: altitud, dirección…), cámara (marca, modelo,
+    objetivo, exposición…), autor y copyright, de la otra solo si la que se queda no los
+    tiene; de la misma cámara, los datos de la toma que le falten. Descripción y título:
+    el más largo. Etiquetas (álbumes de Google) y personas: las de todas, sin repetir.
+    Valoración (la favorita de Google es un 5): la más alta.
+  - Fecha de captura: la de la otra, si la que se queda no la trae en sus metadatos y la
+    suya es dudosa (la del archivo, la de subida) o sale del nombre sin hora el mismo día
+    (gana la hora); una hora fiable del nombre no se pisa. Si es la misma hora y le falta
+    la zona horaria, la zona. La fecha ganada va también al catálogo (la galería deja de
+    marcarla como dudosa y la próxima fusión compara con el día bueno); si la que se
+    queda entra nueva, entra ya con su carpeta y su nombre, y si es de la biblioteca,
+    sigue en su carpeta.
+  - Vídeos: fecha y ubicación si le faltan, la descripción más larga y todas las palabras
+    clave.
+  - Nada se recomprime: en un JPEG solo se reescriben los segmentos EXIF y XMP (los
+    píxeles quedan byte a byte, como al importar un Takeout) y un MP4/MOV se
+    remultiplexa sin recodificar; si la que se queda se exporta al entrar, los metadatos
+    van en la exportación. Si se queda la de la biblioteca, se completa en su sitio
+    (escritura atómica, misma fecha de archivo). PNG, WebP, GIF… no se pueden completar
+    sin recomprimirlos: se dejan como están y el informe lo dice.
+  - Cuenta cualquier copia igual: la de la colección que no entra, la sustituida de la
+    biblioteca (pasa a la que la sustituye) y las repetidas dentro de la colección.
 - **Espacio en disco**: antes de copiar nada calcula lo que ocupará lo que entra (lo mismo
   que en la colección, más ~60 KB de miniatura por archivo; lo sustituido va a la papelera
   del mismo disco y no libera nada). Si no cabe dejando 2 GB libres, no empieza y lo dice;
@@ -429,7 +460,8 @@ o cualquier carpeta— sin repetir lo que ya tiene. Lógica en `fusionar.py`.
 - **Simulación** (`--simular`): no toca la biblioteca ni la colección; el plan completo va
   a un CSV en la carpeta temporal del sistema para revisarlo en Excel antes de fusionar.
   Fuera de simulación, el CSV va a `.exportador/informes/fusion_*.csv`. Acciones:
-  `ANADIDA`, `SUSTITUYE`, `YA_ESTA`, `REPETIDA`, `QUITADA_ANTES`, `ERROR`.
+  `ANADIDA`, `SUSTITUYE`, `YA_ESTA`, `REPETIDA`, `QUITADA_ANTES`, `ERROR` y `METADATOS`
+  (una de la biblioteca que gana los de otra copia); el detalle dice qué gana cada una.
 - La colección **solo se lee**, y no puede estar dentro de la biblioteca ni al revés.
   Los audios no se fusionan.
 
