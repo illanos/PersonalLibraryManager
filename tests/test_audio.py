@@ -6,9 +6,9 @@ import unittest
 from datetime import datetime
 from unittest import mock
 
-import audio
-import galeria
-from main import main
+from exportador import audio
+from exportador import galeria
+from exportador.cli import main
 from tests.ayudas import CasoConCarpeta
 
 OGG = b"OggS\x00\x02" + b"\x00" * 20 + b"opus-falso" * 50
@@ -32,7 +32,7 @@ class Importacion(CasoConCarpeta):
         self.mp3 = self.origen / "Musica" / "cancion.mp3"
         self.mp3.write_bytes(MP3)
         poner_mtime(self.mp3, datetime(2023, 3, 4, 5, 6, 7))
-        self.sin_ffprobe = mock.patch("audio.hay_ffprobe", return_value=False)
+        self.sin_ffprobe = mock.patch("exportador.audio.hay_ffprobe", return_value=False)
         self.sin_ffprobe.start()
         self.addCleanup(self.sin_ffprobe.stop)
 
@@ -50,7 +50,7 @@ class Importacion(CasoConCarpeta):
 
     def test_segunda_ejecucion_no_reprocesa(self):
         audio.procesar_audio(self.origen, self.bib, False)
-        with mock.patch("audio.hash_archivo", side_effect=AssertionError("relee")):
+        with mock.patch("exportador.audio.hash_archivo", side_effect=AssertionError("relee")):
             stats = audio.procesar_audio(self.origen, self.bib, False)
         self.assertEqual((stats["procesados"], stats["ya_importados"]), (0, 2))
 

@@ -4,9 +4,9 @@ import threading
 import unittest
 from unittest import mock
 
-import galeria
-from fotos import OpcionesFotos, procesar_fotos
-from servidor import crear_servidor
+from exportador import galeria
+from exportador.fotos import OpcionesFotos, procesar_fotos
+from exportador.servidor import crear_servidor
 from tests.ayudas import CasoConCarpeta, crear_foto
 
 
@@ -40,7 +40,7 @@ class Indice(CasoConCarpeta):
         galeria.generar_galeria(self.bib)
         huerfana = self.bib / "_galeria" / "thumbs" / "huerfana.jpg"
         huerfana.write_bytes(b"x")
-        with mock.patch("metadatos.leer_metadatos") as leer:
+        with mock.patch("exportador.metadatos.leer_metadatos") as leer:
             _, stats = galeria.construir_indice(self.bib)
         leer.assert_not_called()
         self.assertEqual(stats["reutilizados"], 2)

@@ -5,8 +5,8 @@ from datetime import datetime
 
 from PIL import Image, IptcImagePlugin
 
-from fotos import OpcionesFotos, guardar_optimizada, procesar_fotos
-from metadatos import leer_metadatos
+from exportador.fotos import OpcionesFotos, guardar_optimizada, procesar_fotos
+from exportador.metadatos import leer_metadatos
 from tests.ayudas import CasoConCarpeta, crear_foto
 
 
@@ -34,7 +34,7 @@ class Metadatos(CasoConCarpeta):
         self.assertLess(datos["gps"][1], 0)
 
     def test_titulo_xmp_prefiere_x_default(self):
-        from metadatos import leer_xmp
+        from exportador.metadatos import leer_xmp
         xmp = ('<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF '
                'xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
                '<rdf:Description xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title><rdf:Alt>'
@@ -43,7 +43,7 @@ class Metadatos(CasoConCarpeta):
         self.assertEqual(leer_xmp(xmp)["titulo"], "Atardecer")
 
     def test_xmp_con_entidades_se_ignora(self):
-        from metadatos import leer_xmp
+        from exportador.metadatos import leer_xmp
         self.assertEqual(leer_xmp('<!DOCTYPE x [<!ENTITY a "aaaa">]><x/>')["etiquetas"], [])
 
     def test_sin_exif_usa_el_nombre(self):
@@ -89,7 +89,7 @@ class Exportacion(CasoConCarpeta):
     def test_nunca_recomprime_con_mas_calidad_que_el_original(self):
         # Error anterior: un original a calidad 66 (Google) reducido y guardado a 88 pesaba
         # más que el original; ahora se guarda como mucho a la calidad que ya tenía
-        from fotos import calidad_jpeg
+        from exportador.fotos import calidad_jpeg
         origen = crear_foto(self.dir / "q60.jpg", tam=(4000, 3000), quality=60)
         with Image.open(origen) as im:
             self.assertAlmostEqual(calidad_jpeg(im), 60, delta=1)

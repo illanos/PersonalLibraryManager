@@ -7,12 +7,12 @@ from unittest import mock
 
 from PIL import Image
 
-import galeria
-from catalogo import Catalogo
-from clasificacion import ambito, categoria, es_pegatina, es_whatsapp
-from fotos import OpcionesFotos, procesar_fotos
-from main import main
-from reorganizar import reorganizar
+from exportador import galeria
+from exportador.catalogo import Catalogo
+from exportador.clasificacion import ambito, categoria, es_pegatina, es_whatsapp
+from exportador.fotos import OpcionesFotos, procesar_fotos
+from exportador.cli import main
+from exportador.reorganizar import reorganizar
 from tests.ayudas import CasoConCarpeta, crear_foto
 
 
@@ -131,7 +131,7 @@ class Reorganizar(CasoConCarpeta):
             self.assertIn(nuevo, {f["destino"] for f in cat.filas()})
         favs = json.loads((self.bib / "_galeria" / "favoritos.json").read_text(encoding="utf-8"))
         self.assertEqual(favs, [nuevo])
-        with mock.patch("metadatos.leer_metadatos") as leer:   # reutiliza metadatos y miniatura
+        with mock.patch("exportador.metadatos.leer_metadatos") as leer:   # reutiliza metadatos y miniatura
             elementos, stats = galeria.construir_indice(self.bib)
         leer.assert_not_called()
         self.assertEqual(stats["reutilizados"], 2)

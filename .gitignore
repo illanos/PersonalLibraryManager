@@ -6,3 +6,7 @@ datos/
 # Restos del antiguo _smoke_test.py
 _prueba/
 _prueba_organizados/
+# Instalación del paquete (pip install -e .) y construcción
+*.egg-info/
+build/
+dist/

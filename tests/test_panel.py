@@ -8,9 +8,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import panel
-from main import construir_parser
-from media_utils import MARCA_PROGRESO, VARIABLE_PROGRESO
+from exportador import panel
+from exportador.cli import construir_parser
+from exportador.media_utils import MARCA_PROGRESO, VARIABLE_PROGRESO
 from tests.ayudas import CasoConCarpeta, crear_foto
 
 
@@ -153,7 +153,7 @@ class Validacion(CasoConCarpeta):
 
 class EventosDeProgreso(CasoConCarpeta):
     def test_solo_si_lo_lanza_el_panel(self):
-        from fotos import procesar_fotos
+        from exportador.fotos import procesar_fotos
         for i in range(3):
             crear_foto(self.dir / "o" / f"f{i}.jpg", color=(40 * i, 90, 160))
         procesar_fotos(self.dir / "o", self.dir / "a", True)
@@ -171,7 +171,7 @@ class EventosDeProgreso(CasoConCarpeta):
 
 class EstadoDelTrabajo(unittest.TestCase):
     def trabajo(self, fases):
-        previa = {"argv": ["todo", "x"], "linea": "python main.py todo x", "carpeta": "x",
+        previa = {"argv": ["todo", "x"], "linea": "python -m exportador todo x", "carpeta": "x",
                   "fases": fases}
         return panel.Trabajo(1, "todo", {}, False, previa)
 
@@ -341,12 +341,12 @@ class Http(CasoConCarpeta):
         r = json.loads(cuerpo)
         self.assertEqual(estado, 200)
         self.assertNotIn("error", r)
-        self.assertIn("main.py todo", r["linea"])
+        self.assertIn("-m exportador todo", r["linea"])
         estado, cuerpo = self.pedir("POST", "/api/comprobar", {
             "comando": "todo", "valores": {"origen": str(self.dir / "nada")}})
         r = json.loads(cuerpo)
         self.assertIn("no existe", r["error"])
-        self.assertIn("main.py todo", r["linea"])
+        self.assertIn("-m exportador todo", r["linea"])
 
     def test_errores_al_ejecutar(self):
         estado, cuerpo = self.pedir("POST", "/api/ejecutar", {"comando": "fotos", "valores": {}})

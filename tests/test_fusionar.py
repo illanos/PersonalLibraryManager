@@ -13,14 +13,14 @@ from unittest import mock
 
 from PIL import Image
 
-import fusionar
-import galeria
-from catalogo import ruta_catalogo
-from fotos import OpcionesFotos, procesar_fotos
-from fusionar import Elemento, OpcionesFusion, comparar, planificar
-from limpieza import Limpieza
-from videos import filtro_escala, sondear
-from main import construir_parser, main
+from exportador import fusionar
+from exportador import galeria
+from exportador.catalogo import ruta_catalogo
+from exportador.fotos import OpcionesFotos, procesar_fotos
+from exportador.fusionar import Elemento, OpcionesFusion, comparar, planificar
+from exportador.limpieza import Limpieza
+from exportador.videos import filtro_escala, sondear
+from exportador.cli import construir_parser, main
 from tests.ayudas import CasoConCarpeta
 from tests.test_similares import escena
 
@@ -190,7 +190,7 @@ class ConArchivos(CasoConCarpeta):
     """Casos que se confirman abriendo las fotos (vistos en bibliotecas reales)."""
 
     def elemento(self, ruta, lado, **extra):
-        from similares import dhash
+        from exportador.similares import dhash
         with Image.open(ruta) as im:
             ancho, alto = im.size
         e = Elemento(lado, "foto", ruta, ruta.name, fecha=datetime(2008, 9, 15, 9, 34, 49),
@@ -370,7 +370,7 @@ class Fotos(CasoConCarpeta):
     def test_sin_espacio_no_copia_nada(self):
         antes = huella(self.bib)
         poco = mock.Mock(free=fusionar.MARGEN_DISCO + 10_000)
-        with mock.patch("fusionar.shutil.disk_usage", return_value=poco):
+        with mock.patch("exportador.fusionar.shutil.disk_usage", return_value=poco):
             stats = self.fusionar(simular=True)
             self.assertIn("No hay espacio suficiente", stats["aviso_espacio"])
             self.assertIn("AVISO: No hay espacio", self.consola.getvalue())
@@ -450,10 +450,10 @@ class Videos(CasoConCarpeta):
         return True, ""
 
     def test_fusion_de_videos(self):
-        with mock.patch("fusionar.shutil.which", return_value="ffmpeg"), \
-                mock.patch("fusionar.sondear", side_effect=self.sondear), \
-                mock.patch("fusionar.hash_fotograma", side_effect=self.fotograma), \
-                mock.patch("fusionar.ejecutar_ffmpeg", side_effect=self.codificar):
+        with mock.patch("exportador.fusionar.shutil.which", return_value="ffmpeg"), \
+                mock.patch("exportador.fusionar.sondear", side_effect=self.sondear), \
+                mock.patch("exportador.fusionar.hash_fotograma", side_effect=self.fotograma), \
+                mock.patch("exportador.fusionar.ejecutar_ffmpeg", side_effect=self.codificar):
             stats = fusionar.fusionar(self.col, self.bib, False, OpcionesFusion(hilos=2))
         self.assertEqual((stats["sustituidas"], stats["repetidas"], stats["anadidas"],
                           stats["errores"]), (1, 1, 3, 0))
@@ -485,7 +485,7 @@ class Videos(CasoConCarpeta):
                 info.update(gps=[40.4168, -3.7038], etiquetas=["Viaje"])
             return info
 
-        with mock.patch("fusionar.shutil.which", return_value="ffmpeg"),                 mock.patch("fusionar.sondear", side_effect=sondear),                 mock.patch("fusionar.hash_fotograma", side_effect=self.fotograma),                 mock.patch("fusionar.ejecutar_ffmpeg", side_effect=codificar),                 mock.patch("fusion_metadatos.ejecutar_ffmpeg", side_effect=codificar):
+        with mock.patch("exportador.fusionar.shutil.which", return_value="ffmpeg"),                 mock.patch("exportador.fusionar.sondear", side_effect=sondear),                 mock.patch("exportador.fusionar.hash_fotograma", side_effect=self.fotograma),                 mock.patch("exportador.fusionar.ejecutar_ffmpeg", side_effect=codificar),                 mock.patch("exportador.fusion_metadatos.ejecutar_ffmpeg", side_effect=codificar):
             stats = fusionar.fusionar(self.col, self.bib, False, OpcionesFusion(hilos=2))
         self.assertEqual((stats["sustituidas"], stats["anadidas"], stats["convertidas"],
                           stats["metadatos"], stats["errores"]), (1, 4, 2, 1, 0))
@@ -501,7 +501,7 @@ class Videos(CasoConCarpeta):
                       self.consola.getvalue())
 
     def test_sin_ffmpeg_se_omiten_los_videos(self):
-        with mock.patch("fusionar.shutil.which", return_value=None):
+        with mock.patch("exportador.fusionar.shutil.which", return_value=None):
             stats = fusionar.fusionar(self.col, self.bib, True)
         self.assertEqual((stats["omitidos"], stats["anadidas"]), (5, 0))
 

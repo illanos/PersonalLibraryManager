@@ -8,10 +8,10 @@ from contextlib import closing
 
 from PIL import Image, ImageDraw, ImageFilter
 
-import galeria
-from catalogo import Catalogo, ruta_catalogo
-from fotos import OpcionesFotos, procesar_fotos
-from similares import agrupar, dhash, distancia
+from exportador import galeria
+from exportador.catalogo import Catalogo, ruta_catalogo
+from exportador.fotos import OpcionesFotos, procesar_fotos
+from exportador.similares import agrupar, dhash, distancia
 from tests.ayudas import CasoConCarpeta
 
 
@@ -96,7 +96,7 @@ class Importacion(CasoConCarpeta):
         self.assertTrue(any(o.endswith("WA0001.jpg") for o in origenes))   # la grande
         self.assertFalse(any(o.endswith("WA0002.jpg") for o in origenes))
         self.assertTrue((self.origen / "WhatsApp Images" / "Sent" / "IMG-20240512-WA0002.jpg").exists())
-        import fotos
+        from exportador import fotos
         from unittest import mock
         with mock.patch.object(fotos, "dhash", side_effect=AssertionError("reanaliza")):
             stats = self.procesar(omitir_parecidas=True)

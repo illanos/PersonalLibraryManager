@@ -10,11 +10,11 @@ from pathlib import Path
 
 from PIL import Image
 
-import galeria
-import servidor
-from catalogo import ruta_catalogo
-from fotos import OpcionesFotos, procesar_fotos
-from limpieza import ErrorLimpieza, Limpieza, RutaNoValida, elegir_mejor
+from exportador import galeria
+from exportador import servidor
+from exportador.catalogo import ruta_catalogo
+from exportador.fotos import OpcionesFotos, procesar_fotos
+from exportador.limpieza import ErrorLimpieza, Limpieza, RutaNoValida, elegir_mejor
 from tests.ayudas import CasoConCarpeta
 from tests.test_similares import escena
 
@@ -340,7 +340,7 @@ class ParecidasIncrementales(unittest.TestCase):
     def test_quitar_y_restaurar(self):
         import copy
         import random
-        from galeria import actualizar_parecidas, marcar_parecidas
+        from exportador.galeria import actualizar_parecidas, marcar_parecidas
         azar = random.Random(7)
         bases = [azar.getrandbits(128) for _ in range(40)]
         elementos = []

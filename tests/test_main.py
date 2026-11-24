@@ -2,7 +2,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from main import construir_parser, main
+from exportador.cli import construir_parser, main
 from tests.ayudas import CasoConCarpeta, crear_foto
 
 
@@ -19,7 +19,7 @@ class LineaDeComandos(unittest.TestCase):
         self.assertEqual(args.max_lado_video, 2560)
 
     def test_originales_solo_si_se_piden(self):
-        from main import opciones_fotos, opciones_videos
+        from exportador.cli import opciones_fotos, opciones_videos
         p = construir_parser()
         for comando in ("fotos", "videos", "todo"):
             self.assertFalse(p.parse_args([comando, "x"]).con_originales)
