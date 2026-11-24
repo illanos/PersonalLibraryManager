@@ -22,9 +22,14 @@ Cómo se decide, archivo a archivo:
       · la de la biblioteca es igual o mejor -> la de la colección no se añade;
       · la de la colección es mejor -> entra en la biblioteca y la otra va a la
         papelera (.exportador/papelera; se restaura desde «Limpiar repetidas»).
-  - Sin copia igual, se añade. Lo que ya está en un formato de la galería se copia tal
-    cual (sin recomprimir: no pierde calidad); lo demás se convierte como al importar
-    (JPEG, MP4) y las fotos de más de `max_lado` px se reducen, como en la biblioteca.
+  - Sin copia igual, se añade. Lo que ya está en un formato de la galería y dentro del
+    límite de la exportación se copia tal cual (sin recomprimir: no pierde calidad); lo
+    demás se exporta como al importar: se convierte (JPEG, MP4) y lo que pasa del límite
+    (`max_lado` px en fotos, `max_lado_video` en vídeos) se reduce. Lo mismo vale para la
+    mejor que sustituye a otra, que se compara ya como quedará en la biblioteca.
+  - De dos copias iguales, la que se queda gana los **metadatos** que la otra tenga y ella
+    no (fusion_metadatos.py): fecha, GPS, cámara, descripción, etiquetas, personas...
+    quedándose en cada uno con el que tenga más información. Sin recomprimir nada.
   - Dentro de la propia colección tampoco se repite nada: de varias copias, entra la mejor.
   - WhatsApp sigue aparte: lo de WhatsApp de la colección va a `WhatsApp/`.
 
@@ -48,14 +53,16 @@ from pathlib import Path, PurePath
 
 from PIL import Image, ImageOps
 
+import fusion_metadatos
 from catalogo import ESPERA_BLOQUEO, Catalogo, Informe, ruta_catalogo
 from clasificacion import CARPETA_PEGATINAS, CARPETA_WHATSAPP, carpeta_destino, categoria, es_whatsapp
 from fotos import CALIDAD, EXTENSIONES_FOTO, EXTENSIONES_HEIF, HEIF_DISPONIBLE, MAX_LADO, OpcionesFotos, \
     guardar_optimizada
 from galeria import EXTENSIONES_FOTO as FOTO_GALERIA, EXTENSIONES_VIDEO as VIDEO_GALERIA, VERSION_INDICE
 from media_utils import (
-    CARPETA_GALERIA, CARPETA_INTERNA, fecha_desde_nombre, fecha_mtime, fecha_y_nombre,
-    formato_bytes, hash_archivo, imprimir, listar_archivos, nombre_libre, progreso, ruta_temporal,
+    CARPETA_GALERIA, CARPETA_INTERNA, FORMATO_NOMBRE, MetadatosExtra, fecha_desde_nombre, fecha_mtime,
+    fecha_y_nombre, formato_bytes, hash_archivo, imprimir, listar_archivos, nombre_libre, progreso,
+    ruta_temporal,
 )
 from metadatos import camara_exif, fecha_exif
 from similares import UMBRAL, UMBRAL_COPIA, _proporciones_compatibles, con_detalle, dhash_imagen, distancia
@@ -86,6 +93,8 @@ class OpcionesFusion:
     margen_dias: int = 1            # días antes y después con los que se compara
     max_lado: int = MAX_LADO        # fotos más grandes se reducen al añadirlas (0 = tal cual)
     calidad: int = CALIDAD          # al reducir o convertir una foto
+    max_lado_video: int = MAX_LADO_VIDEO   # vídeos más grandes se recodifican (0 = tal cual)
+    metadatos: bool = True          # la copia que se queda gana los metadatos de las otras
     hilos: int = 0                  # 0 = según los núcleos
     galeria: bool = True            # actualizar la galería de la biblioteca al terminar
 
@@ -108,6 +117,7 @@ class Elemento:
     whatsapp: bool = False
     sent: bool = False
     hash_original: str = None       # MD5 del original según su catálogo
+    tamano_original: int = 0        # y su tamaño en bytes
     nombre_original: str = ""       # nombre (sin extensión, en minúsculas) del archivo original
     animado: bool = False
     st: os.stat_result = None
@@ -128,6 +138,11 @@ class Elemento:
     clave: str = None               # hash con el que se anota en el catálogo
     tmp: Path = None                # copia preparada (.part) antes de colocarla
     aviso: str = ""
+    # Metadatos (de la colección o de la biblioteca): la que se queda y las otras copias
+    extra: MetadatosExtra = None    # la que se queda: lo que gana de las otras
+    gana: list = field(default_factory=list)   # la que se queda: qué, legible
+    nota_metadatos: str = ""        # para el informe
+    fecha_ganada: datetime = None   # la que se queda no traía fecha: la de otra copia
 
     @property
     def dia(self) -> int:
@@ -140,15 +155,16 @@ class Elemento:
 
 # ----------------------------- Calidad -----------------------------
 
-def pixeles(e: Elemento, max_lado: int = MAX_LADO) -> int:
-    """Píxeles con los que quedaría en la biblioteca (lo que se reduce al añadir, reducido)."""
+def pixeles(e: Elemento, max_lado: int = MAX_LADO, max_lado_video: int = MAX_LADO_VIDEO) -> int:
+    """Píxeles con los que quedaría en la biblioteca: lo que pasa del límite de la
+    exportación y se reduce al añadirlo cuenta ya reducido."""
     ancho, alto = e.ancho or 0, e.alto or 0
     if e.lado == "c" and e.convertir:
         if e.tipo == "foto" and max_lado and max(ancho, alto) > max_lado:
             factor = max_lado / max(ancho, alto)
             ancho, alto = round(ancho * factor), round(alto * factor)
-        elif e.tipo == "video":
-            ancho, alto = dimensiones_objetivo(ancho, alto, MAX_LADO_VIDEO)
+        elif e.tipo == "video" and max_lado_video:
+            ancho, alto = dimensiones_objetivo(ancho, alto, max_lado_video)
     return ancho * alto
 
 
@@ -157,14 +173,36 @@ def _peso_comparable(a: Elemento, b: Elemento) -> bool:
     return not (a.lado == "c" and a.convertir) and not (b.lado == "c" and b.convertir)
 
 
-def comparar(a: Elemento, b: Elemento, max_lado: int = MAX_LADO) -> tuple:
+def mismo_original(a: Elemento, b: Elemento) -> bool:
+    """¿Se hicieron las dos del mismo archivo? (El MD5 del original en los dos catálogos.)
+    Con el mismo nombre y hora no basta: una puede salir de una versión recomprimida
+    (p. ej. la de «ahorro de espacio» de Google Fotos), y ahí el peso sí dice algo."""
+    return bool(a.hash_original and a.hash_original == b.hash_original)
+
+
+def es_el_original(e: Elemento) -> bool:
+    """¿Es el original tal cual, sin recomprimir? Pesa lo mismo que el original según su
+    catálogo y lo confirma el MD5 (solo se calcula entonces)."""
+    if not (e.hash_original and e.tamano_original) or e.bytes != e.tamano_original:
+        return False
+    if e.lado == "c" and e.convertir:   # entraría recomprimida
+        return False
+    return _md5(e) == e.hash_original
+
+
+def comparar(a: Elemento, b: Elemento, max_lado: int = MAX_LADO,
+             max_lado_video: int = MAX_LADO_VIDEO) -> tuple:
     """(>0 si `a` es mejor que `b`, <0 si es peor, 0 si equivalen; motivo legible).
 
     Fotos: resolución, EXIF de cámara, no WhatsApp, no la enviada (Sent), peso.
     Vídeos: resolución, no WhatsApp, bitrate, metadatos de cámara.
-    Las diferencias pequeñas (±5 % de píxeles, ±10 % de peso) no cuentan.
+    Las diferencias pequeñas (±5 % de píxeles, ±10 % de peso) no cuentan. La resolución
+    es la que tendrá en la biblioteca: lo que pase del límite cuenta ya reducido.
+    Entre dos copias hechas del mismo archivo (mismo MD5 del original) y con la misma
+    resolución, el peso no dice nada (solo cómo se recomprimió cada una): gana la que sea
+    el original tal cual, si alguna lo es; si no, equivalen.
     """
-    pa, pb = pixeles(a, max_lado), pixeles(b, max_lado)
+    pa, pb = pixeles(a, max_lado, max_lado_video), pixeles(b, max_lado, max_lado_video)
     mayor = max(pa, pb)
     if mayor and abs(pa - pb) / mayor > TOLERANCIA_RESOLUCION:
         return (1 if pa > pb else -1), "más resolución"
@@ -178,20 +216,31 @@ def comparar(a: Elemento, b: Elemento, max_lado: int = MAX_LADO) -> tuple:
             return 1
         return -1 if vb > va * (1 + MARGEN_PESO) else 0
 
+    comparable = _peso_comparable(a, b)
+    del_mismo = comparable and mismo_original(a, b)
+
+    def original():
+        if not del_mismo:
+            return 0
+        oa, ob = es_el_original(a), es_el_original(b)
+        return 0 if oa == ob else (1 if oa else -1)
+
     if a.tipo == "foto":
         criterios = [
             ("tiene EXIF de cámara", lambda: bandera("camara", True)),
             ("no viene de WhatsApp", lambda: bandera("whatsapp", False)),
             ("no es la copia enviada (Sent)", lambda: bandera("sent", False)),
+            ("es el original, sin recomprimir", original),
             ("más peso (menos comprimida)", lambda: mayor_con_margen(a.bytes, b.bytes)
-             if _peso_comparable(a, b) else 0),
+             if comparable and not del_mismo else 0),
         ]
     else:
         criterios = [
             ("no viene de WhatsApp", lambda: bandera("whatsapp", False)),
+            ("es el original, sin recomprimir", original),
             ("más bitrate (menos comprimido)", lambda: mayor_con_margen(
                 a.bytes / a.duracion, b.bytes / b.duracion)
-             if _peso_comparable(a, b) and a.duracion > 0 and b.duracion > 0 else 0),
+             if comparable and not del_mismo and a.duracion > 0 and b.duracion > 0 else 0),
             ("tiene metadatos de cámara", lambda: bandera("camara", True)),
         ]
     for motivo, criterio in criterios:
@@ -201,8 +250,9 @@ def comparar(a: Elemento, b: Elemento, max_lado: int = MAX_LADO) -> tuple:
     return 0, "copias equivalentes"
 
 
-def _clave_calidad(e: Elemento, max_lado: int) -> tuple:
-    return (pixeles(e, max_lado), e.camara, not e.whatsapp, not e.sent, e.bytes)
+def _clave_calidad(e: Elemento, opciones: "OpcionesFusion") -> tuple:
+    return (pixeles(e, opciones.max_lado, opciones.max_lado_video), e.camara, not e.whatsapp,
+            not e.sent, e.bytes)
 
 
 # ----------------------------- Fotogramas -----------------------------
@@ -402,8 +452,7 @@ def planificar(coleccion: list, biblioteca: list, papelera: list = (), descartad
     for e in papelera:
         quitadas.anadir(e)
     descartadas = set(descartadas)
-    orden = sorted(coleccion, key=lambda e: (_clave_calidad(e, opciones.max_lado), e.rel),
-                   reverse=True)
+    orden = sorted(coleccion, key=lambda e: (_clave_calidad(e, opciones), e.rel), reverse=True)
     for n, c in enumerate(orden, 1):
         if n % 200 == 0 or n == len(orden):
             progreso("avance", "fusionar", paso="Comparando por días", hecho=n, total=len(orden),
@@ -426,7 +475,7 @@ def planificar(coleccion: list, biblioteca: list, papelera: list = (), descartad
             indice.anadir(c)
             continue
         c.pareja, c.como = pareja, como
-        signo, motivo = comparar(c, pareja, opciones.max_lado)
+        signo, motivo = comparar(c, pareja, opciones.max_lado, opciones.max_lado_video)
         if signo <= 0:
             c.accion = "ya_esta" if pareja.lado == "b" else "repetida"
             c.motivo = motivo
@@ -483,7 +532,8 @@ def _indice_galeria(carpeta: Path) -> dict:
 
 
 def leer_elemento(ruta: Path, carpeta: Path, lado: str, fila=None, previo: dict = None,
-                  hay_ffmpeg: bool = True, max_lado: int = MAX_LADO) -> Elemento:
+                  hay_ffmpeg: bool = True, max_lado: int = MAX_LADO,
+                  max_lado_video: int = MAX_LADO_VIDEO) -> Elemento:
     """Elemento de un archivo, con lo que ya saben su catálogo (`fila`) y su galería
     (`previo`, si el archivo no ha cambiado); solo lee el archivo para lo que falte."""
     st = ruta.stat()
@@ -493,6 +543,7 @@ def leer_elemento(ruta: Path, carpeta: Path, lado: str, fila=None, previo: dict 
     fila = dict(fila) if fila else {}
     origen = fila.get("origen") or ""
     e.hash_original = fila.get("hash")
+    e.tamano_original = int(fila.get("tamano") or 0)
     e.nombre_original = normalizar_nombre(Path(origen).stem if origen else ruta.stem)
     e.fecha, e.fuente = _fecha_iso(fila.get("fecha")), fila.get("fuente_fecha") or ""
     if not e.fecha:
@@ -550,8 +601,9 @@ def leer_elemento(ruta: Path, carpeta: Path, lado: str, fila=None, previo: dict 
             grande = bool(max_lado and max(e.ancho, e.alto) > max_lado)
             e.convertir = ext not in FOTO_GALERIA or (
                 grande and not e.animado and e.categoria != "pegatina")
-        else:
-            e.convertir = ext not in VIDEO_GALERIA
+        else:   # como al importar: lo que pasa del límite se recodifica
+            e.convertir = ext not in VIDEO_GALERIA or bool(
+                max_lado_video and max(e.ancho, e.alto) > max_lado_video)
     return e
 
 
@@ -592,13 +644,13 @@ def _leer_papelera(biblioteca: Path) -> tuple:
     return elementos, descartadas
 
 
-def _leer_todos(rutas, carpeta, lado, filas, indice, pool, hay_ffmpeg, max_lado, nombre) -> tuple:
+def _leer_todos(rutas, carpeta, lado, filas, indice, pool, hay_ffmpeg, opciones, nombre) -> tuple:
     """(elementos, [(ruta, error)]) de muchos archivos en paralelo, con progreso."""
     def leer(ruta):
         rel = ruta.relative_to(carpeta).as_posix()
         try:
             return leer_elemento(ruta, carpeta, lado, filas.get(rel), indice.get(rel),
-                                 hay_ffmpeg, max_lado), None
+                                 hay_ffmpeg, opciones.max_lado, opciones.max_lado_video), None
         except Exception as exc:
             return ruta, exc
 
@@ -659,16 +711,26 @@ def _preparar(c: Elemento, biblioteca: Path, opciones: OpcionesFusion) -> str:
     destino.parent.mkdir(parents=True, exist_ok=True)
     c.tmp = ruta_temporal(destino)
     try:
-        if c.convertir and c.tipo == "foto":
+        if c.convertir and c.tipo == "foto":   # se exporta como al importar
             guardar_optimizada(c.ruta, c.tmp, OpcionesFotos(max_lado=opciones.max_lado,
-                                                            calidad=opciones.calidad))
+                                                            calidad=opciones.calidad), c.extra)
             modo = "CONVERTIDA"
         elif c.convertir:
-            ok, error = ejecutar_ffmpeg(comando_codificacion(c.ruta, c.tmp, OpcionesVideos()),
-                                        c.duracion)
+            metadatos = fusion_metadatos.argumentos_video(c.extra) if c.extra else []
+            ok, error = ejecutar_ffmpeg(comando_codificacion(
+                c.ruta, c.tmp, OpcionesVideos(max_lado=opciones.max_lado_video),
+                metadatos=metadatos), c.duracion)
             if not ok or not c.tmp.exists() or c.tmp.stat().st_size == 0:
                 raise RuntimeError((error or "FFmpeg no generó salida").splitlines()[-1][:300])
             modo = "CONVERTIDA"
+        elif c.extra is not None:   # tal cual, solo con los metadatos de las otras copias
+            try:
+                fusion_metadatos.escribir(c.ruta, c.tmp, c.tipo, c.extra)
+            except Exception as exc:   # entra igual, sin ellos
+                shutil.copy2(c.ruta, c.tmp)
+                c.extra, c.gana = None, []
+                c.aviso = f"no se le han podido añadir los metadatos de la otra copia: {exc}"
+            modo = "COPIADA"
         else:
             shutil.copy2(c.ruta, c.tmp)   # sin recomprimir: no pierde calidad
             modo = "COPIADA"
@@ -723,6 +785,140 @@ def _colocar(c: Elemento, biblioteca: Path, limpieza, decision: str, catalogo: C
         return None, 0
 
 
+# ----------------------------- Metadatos -----------------------------
+
+def copias_iguales(coleccion: list) -> list:
+    """[(la que se queda, [las otras copias iguales])], para fusionar sus metadatos.
+
+    Cada copia de la colección que no entra cuenta para la que se queda en su lugar
+    (siguiendo las repetidas de la colección y las sustituciones), y cada sustituida de
+    la biblioteca, para la que la sustituye. Primero va la de la biblioteca.
+    """
+    sustituta = {id(c.sustituye): c for c in coleccion
+                 if c.accion == "sustituir" and c.sustituye is not None}
+
+    def final(e):
+        vistas = set()
+        while e is not None and id(e) not in vistas:
+            vistas.add(id(e))
+            if e.lado == "b":
+                if id(e) not in sustituta:
+                    return e
+                e = sustituta[id(e)]
+            elif e.accion in ("anadir", "sustituir"):
+                return e
+            elif e.accion in ("ya_esta", "repetida"):
+                e = e.pareja
+            else:
+                return None
+        return None
+
+    grupos = {}
+    for c in coleccion:
+        if c.accion in ("ya_esta", "repetida"):
+            queda, otra = final(c.pareja), c
+        elif c.accion == "sustituir" and c.sustituye is not None:
+            queda, otra = c, c.sustituye
+        else:
+            continue
+        if queda is not None and queda is not otra:
+            grupos.setdefault(id(queda), (queda, []))[1].append(otra)
+    for _, otras in grupos.values():
+        otras.sort(key=lambda e: e.lado != "b")
+    return list(grupos.values())
+
+
+def _analizar_metadatos(coleccion: list, pool, stats: dict) -> list:
+    """Lee los metadatos de cada grupo de copias iguales y deja en la que se queda lo que
+    gana de las otras (`extra`, `gana`) y en cada copia su nota para el informe.
+    Devuelve las de la biblioteca que hay que completar en su sitio."""
+    grupos = copias_iguales(coleccion)
+    if not grupos:
+        return []
+
+    def analizar(grupo):
+        queda, otras = grupo
+        try:
+            k = fusion_metadatos.leer(queda.ruta, queda.tipo, sondear)
+        except Exception:
+            return
+        k.fecha_actual, k.fuente_actual = queda.fecha, queda.fuente
+        extra, aportan = MetadatosExtra(fuente="fusion"), []
+        for otra in otras:
+            try:
+                aporta = fusion_metadatos.aportar(
+                    k, fusion_metadatos.leer(otra.ruta, otra.tipo, sondear), extra)
+            except Exception:
+                continue
+            if aporta:
+                aportan.append((otra, aporta))
+        if not aportan:
+            return
+        gana = k.describir()
+        if fusion_metadatos.se_puede_completar(queda.ruta, queda.tipo,
+                                               queda.lado == "c" and queda.convertir):
+            queda.extra, queda.gana = extra, gana
+            if "fecha" in k.ganado:   # entra (o queda anotada) con su fecha de captura
+                queda.fecha_ganada = k.fecha
+                queda.fecha, queda.fuente = k.fecha, ("exif" if queda.tipo == "foto" else "metadatos")
+                if queda.lado == "c":
+                    queda.base = queda.fecha.strftime(FORMATO_NOMBRE)
+            for otra, aporta in aportan:
+                otra.nota_metadatos = "sus metadatos completan la que se queda: " + ", ".join(aporta)
+        else:
+            formato = queda.ruta.suffix.lower().lstrip(".").upper()
+            queda.nota_metadatos = (f"las otras copias tienen {', '.join(gana)}, pero a un "
+                                    f"{formato} no se le pueden añadir sin recomprimirlo")
+            for otra, aporta in aportan:
+                otra.nota_metadatos = (f"tiene {', '.join(aporta)} que la que se queda "
+                                       f"({formato}) no admite sin recomprimirla")
+
+    print(f"Comparando los metadatos de {len(grupos)} grupo(s) de copias iguales…")
+    for n, _ in enumerate(pool.map(analizar, grupos), 1):
+        if n % 200 == 0 or n == len(grupos):
+            progreso("avance", "fusionar", paso="Comparando metadatos", hecho=n, total=len(grupos))
+    stats["metadatos_sin_poder"] = sum(1 for queda, _ in grupos
+                                       if queda.extra is None and queda.nota_metadatos)
+    return [queda for queda, _ in grupos if queda.lado == "b" and queda.extra is not None]
+
+
+def _completar_biblioteca(quedan: list, simular: bool, pool, informe, catalogo, stats: dict):
+    """Escribe en su sitio, sin recomprimir, los metadatos que ganan las de la biblioteca
+    (en simulación solo lo cuenta y lo anota). La fecha ganada va también al catálogo:
+    la galería deja de verla como dudosa y la próxima fusión compara con el día bueno."""
+    if not quedan:
+        return
+
+    def completar(b):
+        if simular:
+            return b, True, None
+        try:
+            return b, fusion_metadatos.escribir(b.ruta, b.ruta, b.tipo, b.extra), None
+        except Exception as exc:
+            return b, False, exc
+
+    if not simular:
+        print(f"\nCompletando los metadatos de {len(quedan)} archivo(s) de la biblioteca…")
+    for n, (b, cambiado, error) in enumerate(pool.map(completar, quedan), 1):
+        progreso("avance", "fusionar", paso="Completando metadatos", hecho=n, total=len(quedan),
+                 archivo=b.rel)
+        if error is not None:
+            imprimir(f"  ERROR      {b.rel}: no se le han podido añadir los metadatos: {error}")
+            informe.anotar("ERROR", b.ruta, b.rel,
+                           detalle=f"no se le han podido añadir los metadatos: {error}")
+            stats["errores"] += 1
+            continue
+        if cambiado:
+            stats["metadatos"] += 1
+            detalle = "gana de las otras copias: " + ", ".join(b.gana)
+            if b.fecha_ganada:
+                catalogo.cambiar_destino(b.rel, b.rel, b.fecha.isoformat(), b.fuente)
+                detalle += f"; fecha {b.fecha:%Y-%m-%d %H:%M:%S}, sigue en su carpeta"
+            imprimir(f"  METADATOS  {b.rel}  ({detalle})")
+            informe.anotar("METADATOS", b.ruta, b.rel, b.fecha, b.fuente, b.bytes,
+                           "" if simular else b.ruta.stat().st_size, detalle)
+
+
 def _leer_json(ruta: Path, defecto):
     try:
         return json.loads(ruta.read_text(encoding="utf-8"))
@@ -769,6 +965,7 @@ ETIQUETAS = {
     "ya_esta": ("YA_ESTA", "YA ESTÁ"), "repetida": ("REPETIDA", "REPETIDA"),
     "quitada": ("QUITADA_ANTES", "QUITADA"), "error": ("ERROR", "ERROR"),
 }
+# Y "METADATOS": una de la biblioteca que se queda gana los metadatos de otra copia
 
 
 def _referencia(c: Elemento):
@@ -782,6 +979,15 @@ def _referencia(c: Elemento):
 
 
 def _detalle(c: Elemento) -> str:
+    detalle = _detalle_accion(c)
+    if c.gana:
+        nota = "con los metadatos de las otras copias: " + ", ".join(c.gana)
+    else:
+        nota = c.nota_metadatos
+    return f"{detalle}; {nota}" if detalle and nota else (detalle or nota)
+
+
+def _detalle_accion(c: Elemento) -> str:
     if c.accion == "anadir":
         partes = []
         if c.convertir:
@@ -833,8 +1039,8 @@ def comprobar_espacio(biblioteca: Path, entran: list, stats: dict) -> str:
 def nuevas_estadisticas() -> dict:
     return {"fotos": 0, "videos": 0, "anadidas": 0, "sustituidas": 0, "ya_estaban": 0,
             "repetidas": 0, "quitadas": 0, "ya_fusionadas": 0, "ya_comparadas": 0,
-            "parecidas": 0, "convertidas": 0, "errores": 0, "omitidos": 0,
-            "bytes_anadidos": 0, "bytes_papelera": 0}
+            "parecidas": 0, "convertidas": 0, "metadatos": 0, "metadatos_sin_poder": 0,
+            "errores": 0, "omitidos": 0, "bytes_anadidos": 0, "bytes_papelera": 0}
 
 
 def fusionar(coleccion: Path, biblioteca: Path, simular: bool = False,
@@ -867,7 +1073,9 @@ def fusionar(coleccion: Path, biblioteca: Path, simular: bool = False,
 
     print(f"\n{'SIMULACIÓN' if simular else 'FUSIONANDO'} — {len(archivos)} archivo(s) de "
           f"{coleccion}\n  en {biblioteca}\n  se compara por días (±{opciones.margen_dias}); "
-          f"fotos iguales a ≤ {opciones.umbral} bits — {hilos} hilo(s)\n")
+          f"fotos iguales a ≤ {opciones.umbral} bits; límite {opciones.max_lado or 'ninguno'} px "
+          f"(fotos), {opciones.max_lado_video or 'ninguno'} px (vídeos); metadatos: "
+          f"{'se fusionan' if opciones.metadatos else 'no se tocan'} — {hilos} hilo(s)\n")
 
     with Catalogo(biblioteca, simular) as catalogo, Catalogo(coleccion, simular=True) as cat_col, \
             Informe(biblioteca, "fusion", simular) as informe, ThreadPoolExecutor(hilos) as pool:
@@ -899,13 +1107,13 @@ def fusionar(coleccion: Path, biblioteca: Path, simular: bool = False,
             bib, errores_bib = _leer_todos(
                 listar_archivos(biblioteca, EXTENSIONES_FOTO | EXTENSIONES_VIDEO), biblioteca, "b",
                 {f["destino"]: f for f in filas_bib}, galeria_bib, pool, hay_ffmpeg,
-                opciones.max_lado, "la biblioteca")
+                opciones, "la biblioteca")
             if errores_bib:
                 print(f"AVISO: {len(errores_bib)} archivo(s) de la biblioteca no se pueden leer "
                       "(no se comparan con ellos).")
             col, errores_col = _leer_todos(
                 pendientes, coleccion, "c", {f["destino"]: f for f in cat_col.filas()},
-                _indice_galeria(coleccion), pool, hay_ffmpeg, opciones.max_lado, "la colección")
+                _indice_galeria(coleccion), pool, hay_ffmpeg, opciones, "la colección")
             for ruta, error in errores_col:
                 e = Elemento("c", "video" if ruta.suffix.lower() in EXTENSIONES_VIDEO else "foto",
                              ruta, ruta.relative_to(coleccion).as_posix())
@@ -916,6 +1124,16 @@ def fusionar(coleccion: Path, biblioteca: Path, simular: bool = False,
             if any(c.tipo == "video" for c in col):
                 _precalcular_fotogramas(col, bib, opciones.margen_dias, pool)
             planificar(col, bib, papelera, descartadas, opciones)
+
+            # ¿Cabe? Antes de copiar nada (y en simulación, como aviso)
+            entran = [c for c in col if c.accion in ("anadir", "sustituir")]
+            problema = comprobar_espacio(biblioteca, entran, stats)
+            if problema and not simular:
+                raise EspacioInsuficiente(problema + " No se ha copiado nada.")
+
+            # Metadatos: la que se queda gana lo que saben las otras copias iguales
+            if opciones.metadatos:
+                quedan_bib = _analizar_metadatos(col, pool, stats)
 
             # Nombres en la biblioteca, en orden cronológico (ráfagas -> _01, _02...)
             pegatinas_aparte = (biblioteca / CARPETA_WHATSAPP / CARPETA_PEGATINAS).is_dir()
@@ -937,11 +1155,8 @@ def fusionar(coleccion: Path, biblioteca: Path, simular: bool = False,
                 c.clave = (c.hash_original if c.hash_original and c.hash_original not in hashes_bib
                            else None)
 
-            # ¿Cabe? Antes de copiar nada (y en simulación, como aviso)
-            entran = [c for c in col if c.accion in ("anadir", "sustituir")]
-            problema = comprobar_espacio(biblioteca, entran, stats)
-            if problema and not simular:
-                raise EspacioInsuficiente(problema + " No se ha copiado nada.")
+            if opciones.metadatos:
+                _completar_biblioteca(quedan_bib, simular, pool, informe, catalogo, stats)
 
             # Lo que no entra: al informe (y al catálogo, para no volver a compararlo)
             escribir = []
@@ -956,6 +1171,7 @@ def fusionar(coleccion: Path, biblioteca: Path, simular: bool = False,
                         informe.anotar(etiqueta, c.ruta, c.destino_rel, c.fecha, c.fuente,
                                        c.bytes, "", detalle, _referencia(c) or "")
                         _contar(stats, c)
+                        stats["metadatos"] += c.extra is not None
                     else:
                         escribir.append(c)
                     continue
@@ -970,9 +1186,10 @@ def fusionar(coleccion: Path, biblioteca: Path, simular: bool = False,
                 catalogo.descartar(c.ruta, c.st.st_size, c.st.st_mtime_ns, c.tipo,
                                    MOTIVO_DESCARTE, detalle=detalle, referencia=_referencia(c))
 
-            if not simular and escribir:
-                _ejecutar(escribir, biblioteca, opciones, catalogo, informe, pool, hashes_bib,
-                          galeria_bib, stats)
+            if not simular:
+                movidas = (_ejecutar(escribir, biblioteca, opciones, catalogo, informe, pool,
+                                     hashes_bib, galeria_bib, stats) if escribir else [])
+                _actualizar_galeria(biblioteca, opciones, stats, movidas)
         except KeyboardInterrupt:
             pool.shutdown(wait=True, cancel_futures=True)
             imprimir("\nInterrumpido. Lo ya terminado queda registrado; "
@@ -994,7 +1211,8 @@ def _contar(stats: dict, c: Elemento, despues: int = None):
 
 def _ejecutar(escribir, biblioteca, opciones, catalogo, informe, pool, hashes_bib, galeria_bib,
               stats):
-    """Copia o convierte lo que entra; lo sustituido va a la papelera. Al final, galería."""
+    """Copia o convierte lo que entra; lo sustituido va a la papelera. Devuelve lo que
+    ha ido a la papelera desde otro sitio (para quitarlo de la galería)."""
     from limpieza import Limpieza
     limpieza = Limpieza(biblioteca)
     decision = f"fusion-{os.urandom(4).hex()}"
@@ -1046,6 +1264,7 @@ def _ejecutar(escribir, biblioteca, opciones, catalogo, informe, pool, hashes_bi
                            f"{detalle}; {modo.lower()}" if detalle else modo.lower(),
                            _referencia(c) or "")
             _contar(stats, c, despues)
+            stats["metadatos"] += c.extra is not None
     except KeyboardInterrupt:
         pool_videos.shutdown(wait=False, cancel_futures=True)
         pool.shutdown(wait=False, cancel_futures=True)
@@ -1059,8 +1278,11 @@ def _ejecutar(escribir, biblioteca, opciones, catalogo, informe, pool, hashes_bi
                 c.tmp.unlink(missing_ok=True)
         if cambios_favoritos:
             _pasar_favoritos(biblioteca, cambios_favoritos)
+    return movidas
 
-    hubo_cambios = stats["anadidas"] or stats["sustituidas"]
+
+def _actualizar_galeria(biblioteca: Path, opciones: OpcionesFusion, stats: dict, movidas: list):
+    hubo_cambios = stats["anadidas"] or stats["sustituidas"] or stats["metadatos"]
     if (biblioteca / "galeria.json").exists() and hubo_cambios:
         if opciones.galeria:
             print()
@@ -1086,6 +1308,8 @@ def _imprimir_resumen(stats: dict, simular: bool, informe):
         ("  de ellas convertidas/reducidas", stats["convertidas"]),
         ("  parecidas a otra, no iguales", stats["parecidas"]),
         ("Ya estaban (igual o mejor)", stats["ya_estaban"]),
+        ("Con metadatos de otra copia" + (" (a añadir)" if simular else ""), stats["metadatos"]),
+        ("  sin poder (formato sin recomprimir)", stats["metadatos_sin_poder"]),
         ("Repetidas en la colección", stats["repetidas"]),
         ("Quitadas antes a mano", stats["quitadas"]),
         ("Ya fusionadas antes", stats["ya_fusionadas"]),

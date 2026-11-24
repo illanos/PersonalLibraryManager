@@ -92,6 +92,13 @@ class Esquema(unittest.TestCase):
                                                  "umbral": "3", "margen_dias": "1"}, simular=True)
         self.assertEqual(argv, ["fusionar", "google", "--destino", "bib", "--simular",
                                 "--umbral", "3"])
+        # Límite de los vídeos y metadatos, también desde el panel
+        self.assertEqual((opciones["max_lado_video"]["defecto"], opciones["sin_metadatos"]["tipo"]),
+                         (1920, "si_no"))
+        argv = panel.construir_argv("fusionar", {"coleccion": "google", "destino": "bib",
+                                                 "max_lado_video": "0", "sin_metadatos": True})
+        self.assertEqual(argv[4:], ["--max-lado-video", "0", "--sin-metadatos"])
+        self.assertEqual(panel._nivel("  METADATOS  2024/05-Mayo/a.jpg  (ubicación)"), "ok")
 
     def test_linea_de_comandos_entrecomilla(self):
         linea = panel.linea_de_comandos(["fotos", r"C:\Mis fotos"])

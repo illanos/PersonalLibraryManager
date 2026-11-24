@@ -440,6 +440,7 @@ def ejecutar_ffmpeg(cmd: list, duracion: float = 0, etiqueta: str = "", video: s
             proceso.wait()
             raise
         finally:
+            proceso.stdout.close()
             with _lock_procesos:
                 _procesos.discard(proceso)
             _borrar_progreso(etiqueta)

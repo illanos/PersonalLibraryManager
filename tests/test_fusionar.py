@@ -19,6 +19,7 @@ from catalogo import ruta_catalogo
 from fotos import OpcionesFotos, procesar_fotos
 from fusionar import Elemento, OpcionesFusion, comparar, planificar
 from limpieza import Limpieza
+from videos import filtro_escala, sondear
 from main import construir_parser, main
 from tests.ayudas import CasoConCarpeta
 from tests.test_similares import escena
@@ -69,6 +70,29 @@ class Calidad(unittest.TestCase):
         self.assertEqual(comparar(foto("a", bytes_=105_000), foto("b")),
                          (0, "copias equivalentes"))
 
+    def test_del_mismo_original_el_peso_no_cuenta_salvo_si_es_el_original(self):
+        # Dos exportaciones del mismo archivo (mismo MD5 del original): una pesa más solo
+        # por cómo se recomprimió
+        pesada = foto("a", lado="c", bytes_=150_000, hash_original="h1", tamano_original=400_000)
+        ligera = foto("b", bytes_=100_000, hash_original="h1", tamano_original=400_000)
+        self.assertEqual(comparar(pesada, ligera), (0, "copias equivalentes"))
+        # Con el mismo nombre y hora, sí: una puede venir de una versión recomprimida
+        por_nombre = foto("a", lado="c", bytes_=150_000, nombre_original="img_0001")
+        self.assertEqual(comparar(por_nombre, foto("b", nombre_original="img_0001"))[1],
+                         "más peso (menos comprimida)")
+        # La que es el original tal cual (mismo tamaño y MD5) gana, pese a todo
+        original = foto("a", lado="c", bytes_=400_000, hash_original="h1",
+                        tamano_original=400_000, md5="h1")
+        self.assertEqual(comparar(original, ligera), (1, "es el original, sin recomprimir"))
+        self.assertEqual(comparar(ligera, original), (-1, "es el original, sin recomprimir"))
+        # ... salvo que vaya a entrar recomprimida (más grande que el límite)
+        original.convertir = True
+        self.assertEqual(comparar(original, ligera)[0], 0)
+        # Mismo tamaño pero otro contenido: no es el original
+        impostora = foto("a", lado="c", bytes_=400_000, hash_original="h1",
+                         tamano_original=400_000, md5="otro")
+        self.assertEqual(comparar(impostora, ligera)[0], 0)
+
     def test_lo_que_se_reduce_al_anadir_cuenta_reducido(self):
         grande = foto("a", lado="c", ancho=4000, alto=3000, bytes_=9_000_000, convertir=True)
         en_biblioteca = foto("b", ancho=3200, alto=2400)
@@ -85,6 +109,10 @@ class Calidad(unittest.TestCase):
                          (1, "no viene de WhatsApp"))
         self.assertEqual(comparar(video("a", bytes_=30_000_000), video("b")),
                          (1, "más bitrate (menos comprimido)"))
+        # Un 4K de la colección se exporta a 1920 px: cuenta ya reducido
+        cuatro_k = video("a", 3840, 2160, lado="c", convertir=True)
+        self.assertEqual(comparar(cuatro_k, video("b"))[0], 0)
+        self.assertEqual(comparar(cuatro_k, video("b"), max_lado_video=0)[1], "más resolución")
 
 
 class Plan(unittest.TestCase):
@@ -171,6 +199,20 @@ class ConArchivos(CasoConCarpeta):
         for k, v in extra.items():
             setattr(e, k, v)
         return e
+
+    def test_dos_exportaciones_del_mismo_original_no_se_sustituyen_por_peso(self):
+        # La de Google se exportó a más calidad (pesa más); las dos salen del mismo archivo
+        movil, bib, google = self.dir / "movil", self.dir / "bib", self.dir / "google"
+        escena(movil / "IMG_0001.jpg", 1, tam=(1600, 1200), calidad=95,
+               fecha="2024:05:12 10:00:00")
+        procesar_fotos(movil, bib, False, OpcionesFotos(hilos=2, calidad=70))
+        procesar_fotos(movil, google, False, OpcionesFotos(hilos=2, calidad=95))
+        rel = "2024/05-Mayo/20240512_100000.jpg"
+        self.assertGreater((google / rel).stat().st_size, 1.1 * (bib / rel).stat().st_size)
+        stats = fusionar.fusionar(google, bib, True, OpcionesFusion(hilos=2))
+        self.assertEqual((stats["sustituidas"], stats["ya_estaban"]), (0, 1))
+        self.assertIn("mismo original); son equivalentes", self.consola.getvalue())
+        Path(stats["informe"]).unlink()
 
     def test_mismo_original_girado_y_con_el_1_de_takeout(self):
         self.assertEqual(fusionar.normalizar_nombre("DSCN0169(1)"), "dscn0169")
@@ -373,9 +415,10 @@ class Videos(CasoConCarpeta):
         "otro.mp4": (1280, 720, 10.0, "b"),
         "largo.mp4": (1280, 720, 30.0, "a"),
         "viejo.avi": (640, 480, 5.0, "c"),
+        "enorme.mp4": (3840, 2160, 8.0, "d"),
     }
     FIRMAS = {"a": "f0e1d2c3b4a5968778695a4b3c2d1e0f", "b": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
-              "c": "33cc33cc55aa55aa33cc33cc55aa55aa"}
+              "c": "33cc33cc55aa55aa33cc33cc55aa55aa", "d": "5a5a5a5aa5a5a5a5f00ff00f0ff00ff0"}
 
     def setUp(self):
         super().setUp()
@@ -428,6 +471,35 @@ class Videos(CasoConCarpeta):
         restauradas = Limpieza(self.bib).restaurar()["restauradas"]
         self.assertEqual(restauradas, ["2024/05-Mayo/20240512_100000_sustituida.mp4"])
 
+    def test_lo_que_pasa_del_limite_se_exporta_y_los_metadatos_van_sin_recodificar(self):
+        self.video(self.col / "enorme.mp4", 30_000_000)
+        comandos = []
+
+        def codificar(cmd, duracion=0, etiqueta=""):
+            comandos.append(cmd)
+            return self.codificar(cmd)
+
+        def sondear(ruta):   # la peor trae ubicación y álbum; las demás, no
+            info = self.sondear(ruta)
+            if ruta.name == "peor.mp4":
+                info.update(gps=[40.4168, -3.7038], etiquetas=["Viaje"])
+            return info
+
+        with mock.patch("fusionar.shutil.which", return_value="ffmpeg"),                 mock.patch("fusionar.sondear", side_effect=sondear),                 mock.patch("fusionar.hash_fotograma", side_effect=self.fotograma),                 mock.patch("fusionar.ejecutar_ffmpeg", side_effect=codificar),                 mock.patch("fusion_metadatos.ejecutar_ffmpeg", side_effect=codificar):
+            stats = fusionar.fusionar(self.col, self.bib, False, OpcionesFusion(hilos=2))
+        self.assertEqual((stats["sustituidas"], stats["anadidas"], stats["convertidas"],
+                          stats["metadatos"], stats["errores"]), (1, 4, 2, 1, 0))
+        por_entrada = {Path(c[c.index("-i") + 1]).name: c for c in comandos}
+        # El 4K se recodifica al límite de la exportación (1920), como al importar
+        self.assertIn(filtro_escala(1920), por_entrada["enorme.mp4"])
+        # La mejor entra tal cual (remux, sin recodificar) con lo que sabía la peor
+        remux = por_entrada["mejor.mp4"]
+        self.assertIn("copy", remux)
+        self.assertIn("location=+40.4168-003.7038/", remux)
+        self.assertIn("keywords=Viaje", remux)
+        self.assertIn("sus metadatos completan la que se queda: ubicación, 1 etiqueta",
+                      self.consola.getvalue())
+
     def test_sin_ffmpeg_se_omiten_los_videos(self):
         with mock.patch("fusionar.shutil.which", return_value=None):
             stats = fusionar.fusionar(self.col, self.bib, True)
@@ -438,11 +510,12 @@ class Videos(CasoConCarpeta):
 class VideosReales(CasoConCarpeta):
     """Con FFmpeg de verdad: el mismo vídeo a dos resoluciones es el mismo; otro no."""
 
-    def generar(self, ruta: Path, fuente: str, tam: str):
+    def generar(self, ruta: Path, fuente: str, tam: str, metadatos=()):
         ruta.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
                         "-i", f"{fuente}=size={tam}:rate=25", "-t", "4", "-c:v", "libx264",
                         "-pix_fmt", "yuv420p", "-metadata", "creation_time=2024-05-12T10:00:00Z",
+                        *metadatos, "-movflags", "+use_metadata_tags",
                         str(ruta)], check=True, capture_output=True, stdin=subprocess.DEVNULL)
 
     def test_fotogramas(self):
@@ -453,12 +526,32 @@ class VideosReales(CasoConCarpeta):
         stats = fusionar.fusionar(col, bib, True, OpcionesFusion(hilos=2))
         self.assertEqual((stats["sustituidas"], stats["anadidas"]), (1, 1))
 
+    def test_la_de_la_biblioteca_gana_los_metadatos_sin_recodificar(self):
+        bib, col = self.dir / "bib", self.dir / "col"
+        video = bib / "2024/05-Mayo/20240512_120000.mp4"
+        self.generar(video, "testsrc2", "1280x720")
+        self.generar(col / "pequeno.mp4", "testsrc2", "640x360", [
+            "-metadata", "location=+40.4168-003.7038/", "-metadata", "keywords=Viaje, Ana",
+            "-metadata", "description=En la playa"])
+        antes = sondear(video)
+        stats = fusionar.fusionar(col, bib, False, OpcionesFusion(hilos=2))
+        self.assertEqual((stats["ya_estaban"], stats["metadatos"], stats["errores"]), (1, 1, 0))
+        despues = sondear(video)
+        self.assertEqual((despues["gps"], despues["etiquetas"], despues["descripcion"]),
+                         ([40.4168, -3.7038], ["Viaje", "Ana"], "En la playa"))
+        self.assertEqual((despues["ancho"], despues["codec"], despues["fecha"]),
+                         (1280, antes["codec"], antes["fecha"]))
+
 
 class LineaDeComandos(CasoConCarpeta):
     def test_opciones(self):
         args = construir_parser().parse_args(["fusionar", "g", "--destino", "b", "--umbral", "3",
                                               "--margen-dias", "0", "--simular"])
         self.assertEqual((args.umbral, args.margen_dias, args.simular), (3, 0, True))
+        self.assertEqual((args.max_lado_video, args.sin_metadatos), (1920, False))
+        args = construir_parser().parse_args(["fusionar", "g", "--destino", "b",
+                                              "--max-lado-video", "0", "--sin-metadatos"])
+        self.assertEqual((args.max_lado_video, args.sin_metadatos), (0, True))
         with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
             construir_parser().parse_args(["fusionar", "g"])              # falta --destino
         with self.assertRaises(SystemExit), mock.patch("sys.stderr"):

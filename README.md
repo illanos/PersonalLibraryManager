@@ -146,8 +146,12 @@ python main.py google "G:\Takeout\Google Fotos" --destino "D:\Google"
 
 Añade a una biblioteca lo que le falta de otra (por ejemplo, la exportación de Google
 Fotos), comparando por días: lo que ya está no se añade y, de dos copias iguales, se queda la
-de más calidad; la peor va a la papelera, desde donde se puede restaurar. Antes de copiar
-comprueba que cabe en el disco (dejando 2 GB libres); si no, no empieza.
+de más calidad; la peor va a la papelera, desde donde se puede restaurar. La que se queda
+gana los metadatos de la otra (fecha, ubicación, cámara, descripción, álbumes, personas,
+valoración), quedándose en cada uno con el más completo y sin recomprimir nada. Lo que
+pasa del límite de la exportación (3200 px en fotos, 1920 en vídeos) entra reducido, como
+al importar. Antes de copiar comprueba que cabe en el disco (dejando 2 GB libres); si no,
+no empieza.
 
 ```powershell
 # Simular: el plan completo queda en un CSV para revisarlo en Excel
@@ -155,6 +159,9 @@ python main.py fusionar "D:\Google" --destino "D:\Biblioteca" --simular
 
 # Fusionar de verdad (la colección "D:\Google" solo se lee)
 python main.py fusionar "D:\Google" --destino "D:\Biblioteca"
+
+# Sin tocar los metadatos de lo que ya está, y vídeos hasta 4K
+python main.py fusionar "D:\Google" --destino "D:\Biblioteca" --sin-metadatos --max-lado-video 3840
 ```
 
 ### Reorganizar una biblioteca ya importada

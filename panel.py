@@ -249,7 +249,7 @@ def _nivel(linea: str) -> str:
     if palabras & {"DUPLICADO", "PARECIDA"} or texto.startswith(("YA ESTÁ", "REPETIDA", "QUITADA")):
         return "info"
     if palabras & {"OK", "CAMBIOS", "ANIMADA", "PEGATINA", "AÑADIR", "SUSTITUIR"} \
-            and texto.startswith("["):
+            and texto.startswith("[") or texto.startswith("METADATOS"):
         return "ok"
     if texto.startswith(("PROCESANDO", "SIMULACIÓN", "REORGANIZANDO", "FUSIONANDO", "-----------",
                          "Galería generada", "Origen", "Destino")):

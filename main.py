@@ -195,12 +195,20 @@ def construir_parser() -> argparse.ArgumentParser:
                        help="Días antes y después con los que se compara cada foto o vídeo "
                             "(por defecto 1, por medianoche y zonas horarias; 0 = el mismo día)")
     p_fus.add_argument("--max-lado", dest="max_lado_fotos", type=_positivo, default=3200,
-                       help="Las fotos más grandes se reducen al añadirlas, como al importar "
-                            "(0 = copiarlas siempre tal cual; por defecto 3200)")
+                       help="Límite de la exportación en fotos: las más grandes se exportan "
+                            "reducidas al añadirlas, como al importar, y se comparan ya "
+                            "reducidas (0 = copiarlas siempre tal cual; por defecto 3200)")
+    p_fus.add_argument("--max-lado-video", dest="max_lado_video", type=_positivo, default=1920,
+                       help="Límite de la exportación en vídeos: los más grandes se recodifican "
+                            "al añadirlos, como al importar (0 = tal cual; por defecto 1920)")
     p_fus.add_argument("--calidad", type=_calidad, default=88,
                        help="Calidad al reducir o convertir una foto (por defecto 88)")
     p_fus.add_argument("--hilos", type=_positivo, default=0,
                        help="Archivos en paralelo (por defecto: según los núcleos del equipo)")
+    p_fus.add_argument("--sin-metadatos", action="store_true",
+                       help="No completar la copia que se queda con los metadatos de las otras "
+                            "copias iguales (fecha, GPS, cámara, etiquetas, personas...); por "
+                            "defecto se completan, sin recomprimir")
     p_fus.add_argument("--sin-galeria", action="store_true",
                        help="No actualizar la galería de la biblioteca al terminar")
 
@@ -368,7 +376,8 @@ def main(argv=None):
             resumen = fusionar(
                 args.coleccion.resolve(), args.destino.resolve(), args.simular, OpcionesFusion(
                     umbral=args.umbral, margen_dias=args.margen_dias, max_lado=args.max_lado_fotos,
-                    calidad=args.calidad, hilos=args.hilos, galeria=not args.sin_galeria))
+                    calidad=args.calidad, hilos=args.hilos, galeria=not args.sin_galeria,
+                    max_lado_video=args.max_lado_video, metadatos=not args.sin_metadatos))
         except EspacioInsuficiente as exc:
             sys.exit(f"ERROR: {exc}")
         progreso("fin", "fusionar", resumen=resumen)

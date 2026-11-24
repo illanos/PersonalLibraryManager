@@ -454,7 +454,8 @@ def _grados_minutos_segundos(valor: float) -> tuple:
 
 
 def completar_exif(exif, extra: MetadatosExtra = None) -> bool:
-    """Añade al EXIF la fecha y el GPS de `extra` si la foto no los trae. ¿Ha cambiado?
+    """Añade al EXIF la fecha y el GPS de `extra` si la foto no los trae, y las etiquetas
+    sueltas de `extra.exif` que no tenga (el GPS, entero y solo si no tiene). ¿Ha cambiado?
 
     La descripción no va al EXIF (ImageDescription es ASCII y perdería los acentos):
     va al XMP, que es lo primero que se lee.
@@ -462,6 +463,20 @@ def completar_exif(exif, extra: MetadatosExtra = None) -> bool:
     if extra is None:
         return False
     cambiado = False
+    if extra.exif:   # etiquetas sueltas de otra copia de la foto (fusion_metadatos.py)
+        gps_nuevo = {tag: valor for (ifd, tag), valor in extra.exif.items() if ifd == IFD_GPS}
+        if gps_nuevo and gps_exif(exif) is None:
+            gps = exif.get_ifd(IFD_GPS)
+            gps.clear()
+            gps.update(gps_nuevo)
+            cambiado = True
+        for (ifd, tag), valor in extra.exif.items():
+            if ifd == IFD_GPS:
+                continue
+            destino = exif if ifd == 0 else exif.get_ifd(ifd)
+            if tag not in destino:
+                destino[tag] = valor
+                cambiado = True
     if extra.fecha and fecha_exif(exif) is None:
         texto = extra.fecha.strftime("%Y:%m:%d %H:%M:%S")
         sub = exif.get_ifd(IFD_EXIF)
@@ -491,9 +506,10 @@ def completar_xmp(xmp, extra: MetadatosExtra = None):
     """Paquete XMP con los álbumes, personas, descripción y favorita de `extra` añadidos.
 
     Etiquetas y personas se suman a las que ya hubiera (sin repetir); la descripción
-    sustituye a la anterior (es la que se escribió en Google Fotos); la favorita es
-    xmp:Rating = 5 si no tenía valoración. El resto del XMP se conserva. Sin nada que
-    añadir, o si el XMP no se puede interpretar, devuelve `xmp` sin tocar.
+    sustituye a la anterior (es la que se escribió en Google Fotos), y el título igual;
+    la favorita es xmp:Rating = 5 si no tenía valoración; `valoracion`, la que se pone
+    si la que tiene es menor. El resto del XMP se conserva. Sin nada que añadir, o si el
+    XMP no se puede interpretar, devuelve `xmp` sin tocar.
     """
     if extra is None or not extra.aporta_xmp():
         return xmp
@@ -531,22 +547,40 @@ def completar_xmp(xmp, extra: MetadatosExtra = None):
                 vistos.add(valor.lower())
                 ET.SubElement(bolsa, _q("rdf", "li")).text = valor
 
-    anadir(_q("dc", "subject"), extra.etiquetas)
-    anadir(_q("Iptc4xmpExt", "PersonInImage"), extra.personas)
-    if extra.descripcion:
-        elemento = next(raiz.iter(_q("dc", "description")), None)
+    def texto_alternativo(propiedad, texto):   # dc:description, dc:title: sustituyen al suyo
+        elemento = next(raiz.iter(propiedad), None)
         if elemento is None:
-            elemento = ET.SubElement(descripcion, _q("dc", "description"))
+            elemento = ET.SubElement(descripcion, propiedad)
         for hijo in list(elemento):
             elemento.remove(hijo)
         elemento.text = None
         alternativa = ET.SubElement(elemento, _q("rdf", "Alt"))
-        ET.SubElement(alternativa, _q("rdf", "li"),
-                      {XML_LANG: "x-default"}).text = extra.descripcion
+        ET.SubElement(alternativa, _q("rdf", "li"), {XML_LANG: "x-default"}).text = texto
+
+    anadir(_q("dc", "subject"), extra.etiquetas)
+    anadir(_q("Iptc4xmpExt", "PersonInImage"), extra.personas)
+    if extra.descripcion:
+        texto_alternativo(_q("dc", "description"), extra.descripcion)
+    if extra.titulo:
+        texto_alternativo(_q("dc", "title"), extra.titulo)
     valoracion = _q("xmp", "Rating")
-    if extra.favorita and not any(e.tag == valoracion or valoracion in e.attrib
-                                  for e in raiz.iter()):
+    actuales = [e for e in raiz.iter() if e.tag == valoracion or valoracion in e.attrib]
+    if extra.favorita and not actuales:
         descripcion.set(valoracion, "5")
+    elif extra.valoracion:
+        def valor(e):
+            try:
+                return float(e.text if e.tag == valoracion else e.get(valoracion))
+            except (TypeError, ValueError):
+                return 0
+        if not actuales:
+            descripcion.set(valoracion, str(extra.valoracion))
+        for e in actuales:
+            if valor(e) < extra.valoracion:
+                if e.tag == valoracion:
+                    e.text = str(extra.valoracion)
+                else:
+                    e.set(valoracion, str(extra.valoracion))
 
     with _lock_xml:
         for prefijo, uri in list(prefijos.items()) + list(NS.items()):
