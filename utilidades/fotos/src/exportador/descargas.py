@@ -16,7 +16,8 @@ def carpeta_datos() -> Path:
     """Dónde se guardan las descargas y las preferencias del panel.
 
     1. La variable de entorno EXPORTADOR_DATOS, si está definida.
-    2. `datos/` en la raíz del proyecto, si se ejecuta desde él (src/exportador).
+    2. `datos/` en la carpeta de la utilidad (utilidades/fotos), si se ejecuta desde
+       su `src/`.
     3. Si el paquete está instalado en otro sitio, una carpeta del usuario:
        %LOCALAPPDATA%\\exportador en Windows, ~/.local/share/exportador en los demás.
     """

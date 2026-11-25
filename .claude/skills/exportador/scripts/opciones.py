@@ -5,7 +5,7 @@
     python .claude/skills/exportador/scripts/opciones.py --escribir # regenera references/comandos.md
 
 Lee `exportador.cli.construir_parser()`, así que siempre coincide con el programa. Busca
-el paquete en el `src/` del proyecto que contiene esta skill y, si no, el instalado.
+el paquete en `utilidades/fotos/src` de este monorepo y, si no, el instalado.
 No ejecuta nada ni toca ninguna biblioteca.
 """
 
@@ -19,8 +19,9 @@ REFERENCIA = SKILL / "references" / "comandos.md"
 
 def _cargar_parser():
     for carpeta in Path(__file__).resolve().parents:
-        if (carpeta / "pyproject.toml").is_file() and (carpeta / "src" / "exportador").is_dir():
-            sys.path.insert(0, str(carpeta / "src"))
+        codigo = carpeta / "utilidades" / "fotos" / "src"
+        if (codigo / "exportador").is_dir():
+            sys.path.insert(0, str(codigo))
             break
     from exportador.cli import construir_parser
     return construir_parser()

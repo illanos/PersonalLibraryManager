@@ -12,15 +12,17 @@ miniaturas) se guarda y se reutiliza.
 
 ## Estructura del proyecto
 
-Proyecto Python estándar con *src layout*: el código es el paquete `exportador` dentro de
-`src/`, la documentación en `doc/` y las pruebas en `tests/`.
+Es una de las utilidades del monorepo y vive en `utilidades/fotos/`; salvo que se diga otra
+cosa, las rutas y los comandos de este documento son relativos a esa carpeta. Proyecto Python
+estándar con *src layout*: el código es el paquete `exportador` dentro de `src/`, la
+documentación en `doc/` y las pruebas en `tests/`.
 
 ```
-Exportador/
+utilidades/fotos/
 ├── pyproject.toml              Metadatos del paquete, dependencias y comando `exportador`
 ├── requirements.txt            Solo las dependencias (para usar el código sin instalarlo)
 ├── README.md                   Presentación, instalación y ejemplos
-├── LICENSE
+├── CLAUDE.md, MAPA.md          Guía y mapa del código para el agente (MAPA.md se genera)
 ├── panel.bat                   Abre el panel con doble clic (Windows; no hace falta instalar)
 ├── doc/
 │   └── ARQUITECTURA.md         Este documento
@@ -55,7 +57,6 @@ Exportador/
 │           ├── limpiar.html    «Limpiar repetidas» (la sirve servidor.py como /limpiar.html)
 │           └── panel.html      El panel (lo sirve panel.py)
 ├── tests/                      Pruebas automáticas (unittest); __init__.py añade src/ al path
-├── .claude/skills/exportador/  Skill de Claude Code experta en usar el exportador
 └── datos/                      (no versionada) descargas y preferencias del panel, ver abajo
 ```
 
@@ -92,7 +93,7 @@ Base             media_utils · catalogo · clasificacion · similares · danado
   localizan con `Path(__file__)`, así funcionan igual instalado que desde `src/`.
 - **Carpeta de datos** (`descargas.carpeta_datos()`): ciudades de GeoNames, modelos de caras
   y preferencias del panel. Es la variable de entorno `EXPORTADOR_DATOS` si existe; si no,
-  `datos/` en la raíz del proyecto cuando se ejecuta desde `src/` (o instalado en modo
+  `datos/` en `utilidades/fotos/` cuando se ejecuta desde `src/` (o instalado en modo
   editable), y si el paquete está instalado normalmente, `%LOCALAPPDATA%\exportador`
   (Windows) o `~/.local/share/exportador`.
 - **Pruebas**: `tests/__init__.py` pone `src/` el primero en `sys.path`, así las pruebas usan
@@ -592,18 +593,19 @@ navegador.
 python -m unittest discover -s tests -t .
 ```
 
-Desde la raíz del proyecto, sin necesidad de instalar el paquete (`tests/__init__.py` añade
+Desde `utilidades/fotos/`, sin necesidad de instalar el paquete (`tests/__init__.py` añade
 `src/`). Los tests de vídeo simulan ffprobe y FFmpeg (también la GPU), y los de caras usan un
 motor falso, así que no necesitan FFmpeg ni OpenCV instalados. Para simular una dependencia
 se parchea en el módulo del paquete: `mock.patch("exportador.videos.sondear", ...)`.
 
 ## Skill de Claude Code
 
-`.claude/skills/exportador/` es una *skill* para Claude Code que conoce todos los comandos,
-opciones, flujos de trabajo, la estructura de la biblioteca y la API del paquete. Al abrir
-Claude Code en este proyecto se carga sola cuando se le pide ayuda para importar, fusionar,
-limpiar, generar la galería o entender un informe. Su regla principal es la del propio
-programa: primero `--simular`, y nada real sin confirmación.
+`.claude/skills/exportador/` (en la raíz del monorepo, como las de las demás utilidades) es
+una *skill* para Claude Code que conoce todos los comandos, opciones, flujos de trabajo, la
+estructura de la biblioteca y la API del paquete. Al abrir Claude Code en el monorepo se
+carga sola cuando se le pide ayuda para importar, fusionar, limpiar, generar la galería o
+entender un informe. Su regla principal es la del propio programa: primero `--simular`, y
+nada real sin confirmación.
 
 ```
 .claude/skills/exportador/
@@ -620,8 +622,9 @@ programa: primero `--simular`, y nada real sin confirmación.
 ```
 
 Si cambia un comando o una opción, regenera la referencia con
-`python .claude/skills/exportador/scripts/opciones.py --escribir`; `tests/test_skill.py`
-falla mientras no coincida con la CLI o si la skill cita opciones o comandos que no existen.
+`python .claude/skills/exportador/scripts/opciones.py --escribir` (desde la raíz del monorepo);
+`tests/test_skill.py` falla mientras no coincida con la CLI o si la skill cita opciones o
+comandos que no existen.
 Si cambia el comportamiento (no solo las opciones), revisa también `flujos.md`.
 
 ## Posibles ampliaciones

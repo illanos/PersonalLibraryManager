@@ -7,7 +7,7 @@ name = "exportador"
 dynamic = ["version"]
 description = "Organiza, renombra y optimiza tu biblioteca de fotos, vídeos y notas de voz, con una galería web local."
 readme = "README.md"
-license = { file = "LICENSE" }
+license = { text = "MIT" }
 requires-python = ">=3.10"
 dependencies = ["Pillow>=11.0"]
 
@@ -23,6 +23,15 @@ exportador = "exportador.cli:ejecutar"
 
 [project.urls]
 Repository = "https://github.com/illanos/PersonalLibraryManager"
+
+# Lo que enseñan los mapas del monorepo (herramientas/mapas.py)
+[tool.monorepo]
+titulo = "Fotos"
+resumen = "Importar, ordenar, optimizar y explorar fotos, vídeos y audios (galería, Google Fotos, repetidas)"
+abrir = "`fotos.bat` o `python -m exportador panel`"
+datos = "La biblioteca que elija el usuario (`<biblioteca>/.exportador/`)"
+skill = "exportador"
+puertos = [8080, 8765]
 
 [tool.setuptools.dynamic]
 version = { attr = "exportador.__version__" }

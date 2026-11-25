@@ -148,8 +148,8 @@ por qué gana una y qué metadatos gana.
 ## 8. Carpeta de datos del programa
 
 Ciudades (`lugares.tsv`), modelos de caras (`modelos/`) y preferencias del panel
-(`panel.json`). Está en `EXPORTADOR_DATOS` si se define; si no, en `datos/` en la raíz del
-proyecto (ejecutando desde `src/` o instalado en modo editable) o en
+(`panel.json`). Está en `EXPORTADOR_DATOS` si se define; si no, en `utilidades/fotos/datos/`
+(ejecutando desde `src/` o instalado en modo editable) o en
 `%LOCALAPPDATA%\exportador` si el paquete se instaló de forma normal. No forma parte de
 ninguna biblioteca.
 

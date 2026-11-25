@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "notas"
+dynamic = ["version"]
+description = "Notas de texto, imágenes y notas de voz en una página web local, con categorías y búsqueda."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+# Miniaturas (sin él, las notas enseñan la imagen original)
+miniaturas = ["Pillow>=11.0"]
+
+[project.scripts]
+notas = "notas.cli:ejecutar"
+
+[project.urls]
+Repository = "https://github.com/illanos/PersonalLibraryManager"
+
+# Lo que enseñan los mapas del monorepo (herramientas/mapas.py)
+[tool.monorepo]
+titulo = "Notas"
+resumen = "Notas de texto, imágenes y notas de voz, con categorías y búsqueda"
+abrir = "`notas.bat` o `python -m notas abrir`"
+datos = "`~/Notas` (o `NOTAS_CUADERNO`, o `--cuaderno`)"
+skill = "notas"
+puertos = [8790]
+
+[tool.setuptools.dynamic]
+version = { attr = "notas.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+notas = ["plantillas/*"]

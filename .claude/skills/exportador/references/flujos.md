@@ -81,7 +81,7 @@ normal ver archivos con acción `SIN_CAMBIOS` en el informe.
 
 ## 5. iPhone: HEIC y Live Photos
 
-- Hace falta `pip install pillow-heif` (o `pip install -e ".[heic]"`); sin él las HEIC se
+- Hace falta `pip install pillow-heif` (o `pip install -e "utilidades/fotos[heic]"`); sin él las HEIC se
   omiten con un aviso y se importan en cuanto se instale y se repita el comando.
 - Las HEIC se convierten a JPEG (o WebP) conservando EXIF, GPS y perfil de color.
 - Los vídeos del iPhone usan la fecha local de Apple (`creationdate`) y se giran bien.
@@ -204,7 +204,7 @@ solo si el usuario va a borrar el origen (p. ej. vaciar la tarjeta) y quiere los
 
 ## 12. El panel web
 
-`panel.bat` o `python -m exportador panel` → `http://127.0.0.1:8765/`. Formulario con todas
+`fotos.bat` (en la raíz) o `python -m exportador panel` → `http://127.0.0.1:8765/`. Formulario con todas
 las opciones (sale del mismo `argparse`), comprobación en vivo de carpetas, botones
 **Simular** e **Importar**/**Fusionar**, progreso en directo, registro descargable,
 *Detener* (como Ctrl+C) y el comando equivalente para copiar. En el panel la galería sale

@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "@@nombre@@"
+dynamic = ["version"]
+description = "@@resumen@@"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+@@nombre@@ = "@@nombre@@.cli:ejecutar"
+
+# Lo que enseñan los mapas del monorepo (herramientas/mapas.py)
+[tool.monorepo]
+titulo = "@@titulo@@"
+resumen = "@@resumen@@"
+abrir = "`@@nombre@@.bat` o `python -m @@nombre@@`"
+datos = "(por decidir: fuera del repositorio)"
+skill = "@@nombre@@"
+puertos = []
+
+[tool.setuptools.dynamic]
+version = { attr = "@@nombre@@.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
