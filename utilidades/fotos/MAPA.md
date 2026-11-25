@@ -10,8 +10,8 @@ Paquete `exportador` (`src/exportador/`). Las rutas son relativas a `utilidades/
 |---|---|---|---|---|
 | `audio.py` | Notas de voz y audio: organización por fecha, copiados tal cual (sin recomprimir) | `catalogo`, `clasificacion`, `danados`, `media_utils`, `videos` | `cli` | `test_audio` |
 | `caras.py` | Caras: detección local y agrupación de caras parecidas para nombrarlas en la galería | `descargas`, `media_utils` | `cli`, `galeria`, `reorganizar`, `servidor` | `test_lugares_caras` |
-| `catalogo.py` | Catálogo persistente de la biblioteca (SQLite) e informe CSV de cada ejecución | `media_utils` | `audio`, `fotos`, `fusionar`, `galeria`, `limpieza`, `reorganizar`, `videos` | `test_fechas`, `test_fusionar`, `test_limpieza`, `test_similares`, `test_whatsapp` |
-| `clasificacion.py` | Clasificación del contenido por su procedencia: WhatsApp, pegatinas, capturas | `media_utils` | `audio`, `fotos`, `fusionar`, `galeria`, `limpieza`, `reorganizar`, `videos` | `test_whatsapp` |
+| `catalogo.py` | Catálogo persistente de la biblioteca (SQLite) e informe CSV de cada ejecución | `media_utils` | `audio`, `fotos`, `fusionar`, `galeria`, `limpieza`, `reorganizar`, `videos` | `test_fechas`, `test_fusionar`, `test_galeria`, `test_limpieza`, `test_similares`, `test_whatsapp` |
+| `clasificacion.py` | Clasificación del contenido: WhatsApp, pegatinas, capturas y fotos en movimiento | `media_utils` | `audio`, `fotos`, `fusionar`, `galeria`, `limpieza`, `reorganizar`, `videos` | `test_galeria`, `test_whatsapp` |
 | `cli.py` | Línea de comandos del Exportador: organiza, renombra y optimiza fotos, vídeos y audio, y crea una galería web local | `audio`, `caras`, `fotos`, `fusionar`, `galeria`, `lugares`, `media_utils`, `panel`, `reorganizar`, `servidor`, `takeout`, `videos` | `__main__`, `panel` | `test_audio`, `test_fechas`, `test_fusionar`, `test_lugares_caras`, `test_main`, `test_panel`, `test_skill`, `test_takeout`, `test_videos_hw`, `test_whatsapp` |
 | `danados.py` | Archivos dañados: vacíos, sin cabecera válida o truncados | `media_utils` | `audio`, `fotos`, `videos` | `test_danados` |
 | `descargas.py` | Descargas únicas de datos opcionales (ciudades, modelos de caras) | — | `caras`, `lugares`, `panel` | — |
@@ -71,6 +71,7 @@ Solo lo público (sin `_` delante), en el orden en que aparece.
 - `es_whatsapp()` — Por el nombre (IMG-AAAAMMDD-WA0001) o por estar en una carpeta de WhatsApp
 - `es_pegatina()` — STK-*.webp, o webp pequeño (≤ 512 px) dentro de WhatsApp / de una carpeta de pegatinas
 - `es_captura()`
+- `es_foto_en_movimiento()` — Vídeo de menos de SEGUNDOS_MOVIMIENTO
 - `categoria()` — 'pegatina' \| 'whatsapp' \| 'captura' \| '' (contenido normal)
 - `carpeta_destino()` — Carpeta relativa dentro de la biblioteca (con '/')
 - `en_carpeta_whatsapp()` — ¿Está ya dentro de WhatsApp/ en la biblioteca? (`rel` relativo, con '/')
@@ -279,7 +280,7 @@ Solo lo público (sin `_` delante), en el orden en que aparece.
 
 - `class OpcionesVideos`
 - `sondear()` — Metadatos vía ffprobe (fecha, dimensiones de visualización, duración...) o None
-- `fecha_nombre_camara()` — Fecha *con hora* del nombre que pone la cámara (VID_20160812_203028), o None
+- `fecha_nombre_camara()` — Fecha local *con hora* del nombre que pone la cámara (VID_20160812_203028), o None
 - `fecha_video()` — (fecha, fuente): metadatos > nombre del archivo > fecha de modificación
 - `obtener_fecha()`
 - `dimensiones_objetivo()` — Dimensiones finales previstas (pares) manteniendo la proporción

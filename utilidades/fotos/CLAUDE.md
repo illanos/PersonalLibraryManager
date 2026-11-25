@@ -15,7 +15,7 @@ audios. Interfaces: línea de comandos, panel web y galería web.
 |---|---|
 | Añadir o cambiar un comando u opción | `src/exportador/cli.py` (el panel la muestra solo); luego regenerar la referencia de la skill |
 | Cómo se decide la fecha o el nombre de un archivo | `media_utils.py`, y `fotos.py` / `videos.py` / `audio.py` |
-| Qué va a `WhatsApp/`, capturas o pegatinas | `clasificacion.py` |
+| Qué va a `WhatsApp/`, capturas, pegatinas o fotos en movimiento | `clasificacion.py` |
 | Qué se considera ya importado o descartado | `catalogo.py` |
 | Fotos parecidas y repetidas | `similares.py` (comparar), `limpieza.py` (decidir y papelera) |
 | Leer o conservar EXIF, XMP, IPTC | `metadatos.py` |

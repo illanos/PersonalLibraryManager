@@ -176,6 +176,9 @@ python -m exportador galeria "D:\Biblioteca" --descargar-lugares --descargar-mod
   igualmente y se reintenta la próxima vez.
 - `--caras` requiere `opencv-python`; analiza solo lo nuevo. Los nombres se ponen en la
   ficha de cada foto (`I`) y se aplican a todo su grupo.
+- Los vídeos de menos de 5 s (clips de fotos con movimiento, sobre todo) van con el botón
+  *Fotos en movimiento*: se ven ahí y en *Todo*, no en *Vídeos*. No se mueve ningún archivo.
+  En una biblioteca ya importada basta con volver a generar la galería, sin `--regenerar`.
 - `--regenerar` rehace metadatos y miniaturas de todo (lento); úsalo si cambiaron etiquetas
   en las fotos o algo se ve mal. Sin él, regenerar es incremental.
 - `--puerto N` si el 8080 está ocupado (de todas formas prueba los siguientes);
@@ -217,5 +220,5 @@ con caras y lugares activados por defecto. Una ejecución a la vez.
 | ¿Por qué tiene *Fecha dudosa*? | La fecha salió de la fecha del archivo (`fuente_fecha = archivo`): no traía EXIF ni fecha en el nombre. `estado_biblioteca.py --buscar`. Si es de Google, quizá el JSON lo arregla (`google`/`fusionar`). |
 | ¿Por qué no se importó? | `--buscar` con su nombre: `DESCARTADO (danado …)`, `(parecida)` con la copia buena, o `QUITADA`; también el informe (`DUPLICADO`, `OMITIDA` = versión editada, `ERROR`). |
 | ¿Dónde está la foto X? | `--buscar X` (nombre original o final) da el destino. |
-| ¿Por qué no la veo en la galería? | ¿Es de WhatsApp (vista aparte)? ¿Capturas ocultas? ¿Está en la papelera? ¿Galería sin regenerar tras importar con `fotos`/`videos`? |
+| ¿Por qué no la veo en la galería? | ¿Es de WhatsApp (vista aparte)? ¿Es un vídeo de menos de 5 s (no sale en *Vídeos*, sino en *Fotos en movimiento*)? ¿Capturas ocultas? ¿Está en la papelera? ¿Galería sin regenerar tras importar con `fotos`/`videos`? |
 | ¿Por qué pesa más/menos? | Columnas `bytes_antes`/`bytes_despues` del informe; `SIN_CAMBIOS` = se copió tal cual. |

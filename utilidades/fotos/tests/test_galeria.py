@@ -4,7 +4,9 @@ import threading
 import unittest
 from unittest import mock
 
-from exportador import galeria
+from exportador import clasificacion, galeria
+from exportador.catalogo import Catalogo
+from exportador.clasificacion import es_foto_en_movimiento
 from exportador.fotos import OpcionesFotos, procesar_fotos
 from exportador.servidor import crear_servidor
 from tests.ayudas import CasoConCarpeta, crear_foto
@@ -56,6 +58,110 @@ class Indice(CasoConCarpeta):
         self.assertEqual(auto({"ancho": 1080, "alto": 2400}), ["Verticales"])
         self.assertEqual(auto({"fuente_fecha": "archivo", "valoracion": 3}),
                          ["Con estrellas", "Fecha dudosa"])
+
+
+class FotosEnMovimiento(CasoConCarpeta):
+    """Los vídeos de menos de 5 s, en su propia categoría (FFmpeg simulado)."""
+
+    # Los vídeos falsos llevan escrita su duración, que es lo que «lee» el ffprobe simulado
+    DURACIONES = {"2024/05-Mayo/20240512_100000.mp4": 3.0,
+                  "2024/05-Mayo/20240512_110000.mp4": 5.0,
+                  "2023/01-Enero/20230101_120000.mp4": 10.0,
+                  "2023/01-Enero/20230101_130000.mp4": 4.94,
+                  "2023/01-Enero/20230101_140000.mp4": 0,        # duración desconocida
+                  "WhatsApp/2024/05-Mayo/20240512_120000.mp4": 2.0,
+                  "2022/02-Febrero/VID-20220202-WA0001.mp4": 2.0}   # biblioteca antigua
+    CORTOS = {"2024/05-Mayo/20240512_100000.mp4", "2023/01-Enero/20230101_130000.mp4"}
+
+    def setUp(self):
+        super().setUp()
+        self.bib = self.dir / "bib"
+        for rel, segundos in self.DURACIONES.items():
+            (self.bib / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.bib / rel).write_text(str(segundos))
+        crear_foto(self.bib / "2024/05-Mayo/20240512_100000.jpg")
+        self.sondear = self.simular("exportador.videos.sondear", side_effect=lambda ruta: {
+            "duracion": float(ruta.read_text()), "ancho": 640, "alto": 480})
+        self.simular("exportador.galeria.shutil.which", return_value="ffmpeg")
+        self.simular("exportador.galeria._miniatura_video",
+                     side_effect=lambda ruta, destino, duracion: destino.write_bytes(b"jpg"))
+
+    def simular(self, que, **kwargs):
+        parche = mock.patch(que, **kwargs)
+        self.addCleanup(parche.stop)
+        return parche.start()
+
+    def generar(self) -> dict:
+        self.assertTrue(galeria.generar_galeria(self.bib))
+        return json.loads((self.bib / "galeria.json").read_text(encoding="utf-8"))
+
+    def en_movimiento(self, datos) -> set:
+        return {e["src"] for e in datos["elementos"]
+                if galeria.ETIQUETA_MOVIMIENTO in e.get("auto", [])}
+
+    def test_regla(self):
+        for segundos in (0.1, 3, 4.9):
+            self.assertTrue(es_foto_en_movimiento("video", segundos), segundos)
+        for segundos in (5, 5.0, 10, 0, None):   # 5 s justos no; sin duración, tampoco
+            self.assertFalse(es_foto_en_movimiento("video", segundos), segundos)
+        self.assertFalse(es_foto_en_movimiento("audio", 3))
+        self.assertFalse(es_foto_en_movimiento("foto", 3))
+        self.assertFalse(es_foto_en_movimiento("video", 3, whatsapp=True))
+
+    def test_marca_los_cortos_sin_moverlos(self):
+        datos = self.generar()
+        self.assertEqual(self.en_movimiento(datos), self.CORTOS)
+        por = {e["src"]: e for e in datos["elementos"]}
+        self.assertEqual({e["tipo"] for s, e in por.items() if s.endswith(".mp4")}, {"video"})
+        for rel in self.DURACIONES:
+            self.assertTrue((self.bib / rel).is_file())
+        # Los de WhatsApp siguen en su vista, estén en su carpeta o no
+        for rel in ("WhatsApp/2024/05-Mayo/20240512_120000.mp4",
+                    "2022/02-Febrero/VID-20220202-WA0001.mp4"):
+            self.assertEqual((por[rel]["ambito"], por[rel]["auto"]), ("whatsapp", ["WhatsApp"]))
+        self.assertIn("Fotos en movimiento: 2 de los vídeos", self.consola.getvalue())
+
+    def test_whatsapp_por_su_origen(self):
+        rel = "2024/05-Mayo/20240512_100000.mp4"
+        with Catalogo(self.bib) as cat:
+            cat.registrar(hash="h", tipo="video", origen=r"C:\movil\WhatsApp Video\clip.mp4",
+                          tamano=1, mtime_ns=1, destino=rel)
+        self.assertEqual(self.en_movimiento(self.generar()), self.CORTOS - {rel})
+
+    def test_regenerar_reutiliza_y_mantiene_la_categoria(self):
+        primera = self.generar()
+        self.sondear.reset_mock()
+        self.assertEqual(self.generar(), primera)
+        _, stats = galeria.construir_indice(self.bib)
+        self.sondear.assert_not_called()
+        self.assertEqual((stats["reutilizados"], stats["movimiento"], stats["videos"]), (8, 2, 7))
+
+    def test_biblioteca_con_la_galeria_de_antes(self):
+        # Una galeria.json sin la categoría la recibe al regenerar, sin releer ningún vídeo
+        datos = self.generar()
+        for e in datos["elementos"]:
+            e["auto"] = [a for a in e.get("auto", []) if a != galeria.ETIQUETA_MOVIMIENTO]
+        del datos["segundos_movimiento"]
+        (self.bib / "galeria.json").write_text(json.dumps(datos), encoding="utf-8")
+        self.sondear.reset_mock()
+        nuevos = self.generar()
+        self.sondear.assert_not_called()
+        self.assertEqual(self.en_movimiento(nuevos), self.CORTOS)
+
+    def test_el_umbral_se_cambia_en_un_solo_sitio(self):
+        self.generar()
+        self.sondear.reset_mock()
+        with mock.patch.object(clasificacion, "SEGUNDOS_MOVIMIENTO", 4):
+            datos = self.generar()
+        self.sondear.assert_not_called()
+        self.assertEqual(self.en_movimiento(datos), {"2024/05-Mayo/20240512_100000.mp4"})
+
+    def test_la_pagina_usa_la_etiqueta_y_el_umbral_del_indice(self):
+        self.assertEqual(self.generar()["segundos_movimiento"], clasificacion.SEGUNDOS_MOVIMIENTO)
+        pagina = (self.bib / "galeria.html").read_text(encoding="utf-8")
+        self.assertIn(f"const MOVIMIENTO = '{galeria.ETIQUETA_MOVIMIENTO}';", pagina)
+        self.assertIn('data-tipo="movimiento"', pagina)
+        self.assertIn("datos.segundos_movimiento", pagina)
 
 
 class Servidor(CasoConCarpeta):

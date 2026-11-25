@@ -138,6 +138,10 @@ locales): usa siempre `--servir`. Desde la galería, el botón **Limpiar repetid
 los grupos de fotos casi idénticas, propone la mejor copia y mueve las demás a una papelera
 de la biblioteca, desde la que se pueden restaurar.
 
+Los vídeos de menos de 5 segundos (sobre todo, los clips de las fotos con movimiento del móvil)
+tienen su propio botón, **Fotos en movimiento**, y no salen en *Vídeos*. Es solo cosa de la
+galería: no cambian de carpeta ni de nombre, y los cortos de WhatsApp siguen en su vista.
+
 ### Importar un Takeout de Google Fotos
 
 Igual que `todo`, para la carpeta `Google Fotos` de un Takeout: cada foto y vídeo recibe lo
