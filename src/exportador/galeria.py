@@ -24,7 +24,8 @@ from pathlib import Path
 from .catalogo import info_por_destino
 from .media_utils import (CARPETA_GALERIA, fecha_desde_nombre, fecha_mtime, progreso,
                           recorrer_archivos)
-from .clasificacion import RE_CAPTURA, ambito, es_pegatina
+from .clasificacion import (RE_CAPTURA, SEGUNDOS_MOVIMIENTO, ambito, es_foto_en_movimiento,
+                            es_pegatina)
 from . import lugares
 from .similares import (BITS, MIN_DETALLE, TOLERANCIA_PROPORCION, UMBRAL,
                         _proporciones_compatibles, agrupar, candidatos, con_detalle, dhash,
@@ -132,6 +133,7 @@ def _metadatos_video(ruta: Path, hay_ffmpeg: bool) -> dict:
 # Etiquetas automáticas: casi ninguna foto de móvil trae etiquetas propias, pero
 # sus metadatos permiten agruparlas igualmente.
 _RE_WHATSAPP = re.compile(r"-WA\d{4}|whatsapp", re.IGNORECASE)
+ETIQUETA_MOVIMIENTO = "Fotos en movimiento"   # la página hace su botón con esta etiqueta
 
 
 def etiquetas_automaticas(e: dict) -> list:
@@ -145,6 +147,8 @@ def etiquetas_automaticas(e: dict) -> list:
         ("Capturas", RE_CAPTURA.search(nombres)),
         ("WhatsApp", e.get("ambito") == "whatsapp" or _RE_WHATSAPP.search(nombres)),
         ("Pegatinas", pegatina),
+        (ETIQUETA_MOVIMIENTO, es_foto_en_movimiento(e.get("tipo"), e.get("duracion"),
+                                                    e.get("ambito") == "whatsapp")),
         ("Con ubicación", e.get("gps")),
         ("Con estrellas", e.get("valoracion")),
         ("Verticales", alto > ancho * 1.1 > 0),
@@ -292,6 +296,7 @@ def construir_indice(carpeta: Path, regenerar: bool = False, hilos: int = 0):
         "fotos": sum(e["tipo"] == "foto" for e in elementos),
         "videos": sum(e["tipo"] == "video" for e in elementos),
         "audios": sum(e["tipo"] == "audio" for e in elementos),
+        "movimiento": sum(ETIQUETA_MOVIMIENTO in e.get("auto", ()) for e in elementos),
         "reutilizados": sum(r for _, r in resultados),
         "miniaturas_borradas": len(huerfanas),
         "videos_sin_miniatura": sum(e["tipo"] == "video" and not e["thumb"]
@@ -417,7 +422,8 @@ def generar_galeria(carpeta: Path, regenerar: bool = False, caras: bool = False)
 
     from .caras import leer_nombres
     indice = {"version": VERSION_INDICE, "titulo": carpeta.name, "elementos": elementos,
-              "nombres_caras": leer_nombres(carpeta), "criterio_parecidas": CRITERIO_PARECIDAS}
+              "nombres_caras": leer_nombres(carpeta), "criterio_parecidas": CRITERIO_PARECIDAS,
+              "segundos_movimiento": SEGUNDOS_MOVIMIENTO}
     _escribir(carpeta / "galeria.json",
               json.dumps(indice, ensure_ascii=False, separators=(",", ":")))
     _escribir(carpeta / "galeria.html", PLANTILLA.read_text(encoding="utf-8"))
@@ -430,6 +436,9 @@ def generar_galeria(carpeta: Path, regenerar: bool = False, caras: bool = False)
     print(f"Galería generada: {stats['fotos']} foto(s), {stats['videos']} vídeo(s) "
           f"y {stats['audios']} audio(s) "
           f"({nuevos} nuevo(s) o modificado(s), {stats['reutilizados']} sin cambios).")
+    if stats["movimiento"]:
+        print(f"Fotos en movimiento: {stats['movimiento']} de los vídeos, por durar menos de "
+              f"{SEGUNDOS_MOVIMIENTO} s (botón propio en la galería; no se ha movido nada).")
     if stats["grupos_parecidas"]:
         print(f"Fotos parecidas: {stats['grupos_parecidas']} grupo(s) "
               "(filtro «Parecidas» en la galería; no se ha borrado nada).")

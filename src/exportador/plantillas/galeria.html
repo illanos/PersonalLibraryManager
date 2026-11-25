@@ -168,6 +168,7 @@
     <button class="chip activo" data-tipo="">Todo</button>
     <button class="chip" data-tipo="foto">Fotos</button>
     <button class="chip" data-tipo="video">Vídeos</button>
+    <button class="chip" data-tipo="movimiento" hidden>Fotos en movimiento</button>
     <button class="chip" data-tipo="audio" hidden>Audio</button>
     <button class="chip" data-tipo="fav">★ Favoritos</button>
   </div>
@@ -253,12 +254,18 @@ const fmtNum = new Intl.NumberFormat('es');
 
 const ruta = p => p.split('/').map(encodeURIComponent).join('/');
 const normalizar = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const MOVIMIENTO = 'Fotos en movimiento';   // etiqueta automática de los vídeos muy cortos
+const esMovimiento = it => (it.auto || []).includes(MOVIMIENTO);
 const mayuscula = s => s.charAt(0).toUpperCase() + s.slice(1);
 const fecha = it => new Date(it.fecha);
 function duracion(seg) {
   seg = Math.round(seg || 0);
   const h = Math.floor(seg / 3600), m = Math.floor(seg / 60) % 60, s = String(seg % 60).padStart(2, '0');
   return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
+}
+/* Las fotos en movimiento, con décimas: «3,2 s» dice más que «0:03» (y 4,8 s no es «0:05») */
+function textoDuracion(it) {
+  return esMovimiento(it) ? `${fmtNum.format(it.duracion)} s` : duracion(it.duracion);
 }
 function tamano(b) {
   const u = ['B', 'KB', 'MB', 'GB']; let i = 0;
@@ -307,6 +314,9 @@ async function cargar() {
   $('btn-whatsapp').hidden = !estado.items.some(it => it.ambito === 'whatsapp');
   $('btn-limpiar').hidden = !gruposParecidas.size || !location.protocol.startsWith('http');
   document.querySelector('.chip[data-tipo="audio"]').hidden = !estado.items.some(it => it.tipo === 'audio');
+  if (datos.segundos_movimiento) chipMovimiento().title =
+    `Vídeos de menos de ${datos.segundos_movimiento} s: casi todos son el clip de una foto con movimiento`;
+  pintarMovimiento();
   pintarOcultar();
   rellenarAnios();
   pintarPanelEtiquetas();
@@ -322,13 +332,14 @@ async function cargar() {
 }
 
 function rellenarAnios() {
-  const cuenta = {};
-  enAmbito().forEach(it => { const a = it.fecha.slice(0, 4); cuenta[a] = (cuenta[a] || 0) + 1; });
+  const cuenta = {}, lista = enAmbito();
+  if (estado.anio && !lista.some(it => it.fecha.startsWith(estado.anio))) estado.anio = '';
+  if (estado.anio) cuenta[estado.anio] = 0;   // el elegido sigue ahí aunque este tipo no tenga nada
+  lista.filter(esDelTipo).forEach(it => { const a = it.fecha.slice(0, 4); cuenta[a] = (cuenta[a] || 0) + 1; });
   const sel = $('anio');
   while (sel.options.length > 1) sel.remove(1);
-  if (estado.anio && !cuenta[estado.anio]) estado.anio = '';
-  sel.value = estado.anio;
   Object.keys(cuenta).sort().reverse().forEach(a => sel.add(new Option(`${a} (${fmtNum.format(cuenta[a])})`, a)));
+  sel.value = estado.anio;
 }
 
 /* ---------- Índice de búsqueda y etiquetas ---------- */
@@ -347,7 +358,7 @@ function indexar() {
     it._personas = personasDe(it);
     it._busqueda = normalizar([
       it.nombre, it.fecha.replace('T', ' '), isNaN(f) ? '' : fmtMes.format(f), it.carpeta,
-      it.tipo === 'video' ? 'video' : it.tipo === 'audio' ? 'audio nota de voz' : 'foto', it.camara,
+      esMovimiento(it) ? '' : it.tipo === 'video' ? 'video' : it.tipo === 'audio' ? 'audio nota de voz' : 'foto', it.camara,
       it.objetivo, it.titulo, it.descripcion, it.autor, it.nombre_original, it.lugar, it.region, it.pais,
       ...(it.etiquetas || []), ...it._personas, ...(it.auto || []),
     ].filter(Boolean).join(' '));
@@ -403,13 +414,22 @@ async function nombrarCara(grupo) {
 }
 
 /* ---------- Filtros ---------- */
+function esDelTipo(it) {
+  switch (estado.tipo) {
+    case '': return true;
+    case 'fav': return estado.favs.has(it.src);
+    case 'movimiento': return esMovimiento(it);
+    case 'video': return it.tipo === 'video' && !esMovimiento(it);
+    default: return it.tipo === estado.tipo;
+  }
+}
+
 function aplicar() {
   const texto = normalizar($('busqueda').value.trim());
   const palabras = texto ? texto.split(/\s+/) : [];
   estado.filtrados = estado.items.filter(it => {
-    if (estado.tipo === 'fav') { if (!estado.favs.has(it.src)) return false; }
-    else if (estado.tipo && it.tipo !== estado.tipo) return false;
     if ((it.ambito || '') !== estado.ambito) return false;
+    if (!esDelTipo(it)) return false;
     if (estado.ocultar[estado.ambito] && it._claves.has(claveOcultable())) return false;
     if (estado.anio && !it.fecha.startsWith(estado.anio)) return false;
     for (const clave of estado.activas) if (!it._claves.has(clave)) return false;
@@ -423,9 +443,13 @@ function aplicar() {
 }
 
 $('busqueda').addEventListener('input', () => { clearTimeout(aplicar.t); aplicar.t = setTimeout(aplicar, 150); });
+function elegirTipo(tipo) {
+  estado.tipo = tipo;
+  document.querySelectorAll('.chip[data-tipo]').forEach(b => b.classList.toggle('activo', b.dataset.tipo === tipo));
+}
 document.querySelectorAll('.chip[data-tipo]').forEach(btn => btn.addEventListener('click', () => {
-  document.querySelectorAll('.chip[data-tipo]').forEach(b => b.classList.toggle('activo', b === btn));
-  estado.tipo = btn.dataset.tipo;
+  elegirTipo(btn.dataset.tipo);
+  rellenarAnios();
   aplicar();
 }));
 $('anio').addEventListener('change', e => { estado.anio = e.target.value; aplicar(); });
@@ -480,7 +504,7 @@ function crearTarjeta(it, i) {
   }
   if (it.tipo === 'video' || it.tipo === 'audio') {
     const d = document.createElement('span'); d.className = 'duracion';
-    d.innerHTML = ICONO_PLAY; d.append(it.duracion ? duracion(it.duracion) : '');
+    d.innerHTML = ICONO_PLAY; d.append(it.duracion ? textoDuracion(it) : '');
     fig.append(d);
   }
   const estrella = document.createElement('button');
@@ -650,10 +674,18 @@ function cambiarAmbito(ambito) {
   $('btn-whatsapp').textContent = wa ? '← Volver a la línea de tiempo' : 'WhatsApp';
   const titulo = estado.titulo + (wa ? ' · WhatsApp' : '');
   $('titulo').textContent = titulo;
+  pintarMovimiento();
   pintarOcultar();
   rellenarAnios();
   pintarPanelEtiquetas();
   actualizarActivas();
+}
+
+/* El botón «Fotos en movimiento» solo sale donde las hay: en la vista WhatsApp, nunca */
+function chipMovimiento() { return document.querySelector('.chip[data-tipo="movimiento"]'); }
+function pintarMovimiento() {
+  chipMovimiento().hidden = !enAmbito().some(esMovimiento);
+  if (chipMovimiento().hidden && estado.tipo === 'movimiento') elegirTipo('');
 }
 
 function pintarOcultar() {
@@ -825,7 +857,7 @@ function pintarDatos(it) {
   if (it.nombre_original && it.nombre_original !== archivo) fila('Nombre original', it.nombre_original);
   fila('Dimensiones', it.ancho && it.alto ? `${it.ancho} × ${it.alto} px` +
        (it.tipo === 'foto' ? ` (${(it.ancho * it.alto / 1e6).toFixed(1).replace('.', ',')} MP)` : '') : '');
-  fila('Duración', it.tipo !== 'foto' && it.duracion ? duracion(it.duracion) : '');
+  fila('Duración', it.tipo !== 'foto' && it.duracion ? textoDuracion(it) : '');
   fila('Tamaño', it.bytes ? tamano(it.bytes) : '');
   fila('Cámara', chips('camara', it.camara ? [it.camara] : []));
   fila('Objetivo', it.objetivo);
