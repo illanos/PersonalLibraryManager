@@ -128,6 +128,12 @@ class Busqueda(CasoConCuaderno):
         self.assertEqual(self.titulos(buscar="viejo"), [])
         self.assertEqual(self.titulos(buscar="nuevo"), ["A"])
 
+    def test_listas(self):
+        for texto in ("☐ Pan", "La compra:\n☑ Pan", "El símbolo ☐ suelto no", "nada"):
+            self.c.crear(texto=texto)
+        self.assertEqual(sorted(n["texto"] for n in self.c.listar(tipo="lista")), ["La compra:\n☑ Pan", "☐ Pan"])
+        self.assertEqual(self.c.estado()["totales"]["lista"], 2)
+
     def test_por_tipo(self):
         self.c.crear("texto")
         self.adjuntar(self.c.crear("foto"), png())

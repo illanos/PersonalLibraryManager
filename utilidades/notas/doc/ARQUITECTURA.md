@@ -14,14 +14,14 @@ en `MAPA.md` (generado); aquí va lo que no se ve en el código.
 ```
 Interfaces       cli ───────────── servidor ── plantillas/ (notas.html · notas.css · notas.js)
                   │                   │
-Operaciones      copia               │
+Operaciones      copia · keep        │
                   │                   │
 Base             cuaderno ────── adjuntos ────── errores
 ```
 
 Cada capa solo usa las de debajo. `cuaderno.Cuaderno` es la única puerta a los datos: valida todo lo
 que recibe, así la web y la terminal se comportan igual. Solo se usa la biblioteca estándar; Pillow es
-opcional y solo lo importan `medidas` y `miniatura`, en `adjuntos.py`.
+opcional y solo lo importan `medidas` y `miniatura`, en `adjuntos.py`, y `reducir_imagen`, en `keep.py`.
 
 ## El cuaderno
 
@@ -40,8 +40,9 @@ opcional y solo lo importan `medidas` y `miniatura`, en `adjuntos.py`.
   programa, y la base de datos se mantiene pequeña.
 - **Una conexión por operación**, con espera de 30 s si está ocupada. La web (varios hilos) y la
   terminal pueden usar el mismo cuaderno a la vez. Cada escritura es una transacción: o todo o nada.
-- **`PRAGMA user_version`** lleva la versión del esquema. Si cambia, `_preparar` tiene que migrar los
-  cuadernos que ya existen; uno de una versión más nueva se rechaza con un mensaje claro.
+- **`PRAGMA user_version`** lleva la versión del esquema. `MIGRACIONES` tiene lo que lleva de cada versión
+  a la siguiente, y `_preparar` aplica las que falten: un cuaderno nuevo y uno antiguo acaban igual. Uno de
+  una versión más nueva se rechaza con un mensaje claro.
 - **Los identificadores no se reutilizan** (`AUTOINCREMENT`), y la dirección de cada adjunto lleva el
   nombre de su archivo (`?v=…`): el navegador los puede guardar en la caché para siempre.
 - **Fechas en UTC** (ISO 8601 con milisegundos): se ordenan como texto y cada interfaz las enseña en la
@@ -50,13 +51,19 @@ opcional y solo lo importan `medidas` y `miniatura`, en `adjuntos.py`.
 ### Notas
 
 `titulo`, `texto`, `color`, `fijada`, `archivada`, `papelera` (cuándo se mandó, o nada), `creada`,
-`modificada` y `version`.
+`modificada` y `version`. Las importadas, además, `origen` (para no repetirlas) y `detalles`.
 
 - `modificada` y `version` solo suben al cambiar el título o el texto (y `modificada`, también al añadir
   o quitar adjuntos): ponerle un color a una nota vieja no la sube arriba.
 - Archivar una nota la suelta, y fijar una archivada la saca del archivo. Estar fijada y archivada a la
   vez no significa nada.
 - Una nota en la papelera no se puede cambiar: primero se restaura.
+
+- **Las listas son texto**: cada línea que empieza por `☐` o `☑` es una casilla, y con alguna la nota es una
+  lista (`--tipo lista`). Así se editan, se buscan, se copian y se leen sin el programa como cualquier otra
+  nota, y una nota puede mezclar texto y casillas.
+- **`detalles`** es un JSON con lo que traía una nota importada y no es texto: enlaces con el título de su
+  página, con quién se compartió, recordatorio, archivo de origen… Se enseña y se busca, pero no se edita.
 
 ### Categorías
 
@@ -95,7 +102,30 @@ Ninguna de las dos está en la línea de comandos, a propósito: se hace desde l
   o no se puede anotar en la base de datos, no queda nada a medias.
 - **Miniaturas** WebP de 720 px, hechas la primera vez que se piden y giradas según su EXIF. No se hacen
   si la imagen es pequeña o animada, ni sin Pillow: se sirve la original.
+- Al importar sí se recomprimen (ver «Importar de Google Keep»): la original sigue en el Takeout.
 - **HEIC** se rechaza diciendo qué hacer: los navegadores no lo enseñan.
+
+## Importar de Google Keep
+
+`keep.py` lee el Takeout (`leer`) y lo añade al cuaderno (`importar`). Lo que decide:
+
+- **Se lee el JSON**, no el HTML: dice lo mismo, y con las fechas al microsegundo. El texto con formato
+  (`textContentHtml`) solo añade negritas y subrayados, que el cuaderno no tiene.
+- **La fecha de creación identifica la nota** (`origen`, `keep:<microsegundos>`): Keep no da ningún
+  identificador, y el nombre del archivo cambia con el título. Repetir la importación añade las que falten y
+  no pisa las que hay, aunque se hayan cambiado.
+- **Cada nota se guarda entera o no se guarda**: primero se copian sus adjuntos y luego, en una sola
+  transacción, la nota con todo lo suyo. Si se corta a medias, se repite y sigue.
+- **Un archivo que falta o está dañado no deja fuera su nota**: se apunta en `detalles.faltan` y se avisa. En
+  cambio, si lo que falta es ffmpeg, la nota espera a la siguiente vez: se arregla instalándolo.
+- **Las fechas son las de Keep**. Cuándo se añadió cada adjunto está en su nombre (milisegundos, en
+  hexadecimal o en decimal); de ahí salen su carpeta y el nombre que se enseña.
+- **Los dibujos** no llevan fecha en el nombre. Al dibujar sobre una imagen, Keep deja la original en el
+  Takeout sin que la cite ninguna nota: se añade a la nota con un dibujo creada en ese momento. Cualquier otro
+  archivo sin dueño va a una nota archivada propia.
+- **Imágenes a 1920 px y calidad 80**: en un Takeout real, de 682 MB a 83 MB. Se guardan giradas y con su EXIF
+  (fecha, cámara, lugar) menos lo propio de cada fabricante. Si la original ya ocupa menos, se queda.
+- **Colores**: Keep tiene doce y el cuaderno ocho; los que comparten pareja se apuntan en `detalles.color`.
 
 ## Servidor y API
 
@@ -169,6 +199,5 @@ explica todos los comandos y opciones y no cita ninguno que no exista. Lo que ne
 ## Posibles ampliaciones
 
 - Transcribir las notas de voz en local (p. ej. con `faster-whisper`, opcional) para poder buscar en ellas.
-- Importar las notas de Google Keep desde un Takeout.
-- Listas con casillas.
+- Un botón para empezar una lista (ahora hay que escribir `☐` la primera vez).
 - Abrirlas desde el móvil en la red local (con contraseña y HTTPS: sin él no se puede grabar).

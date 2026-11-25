@@ -28,6 +28,8 @@ const ICONOS = {
   etiqueta: 'M4 4h8l8 8-8 8-8-8zM8 8h.01',
   nota: 'M5 4h14v11l-5 5H5zM14 20v-5h5',
   texto: 'M5 6h14M5 11h14M5 16h9',
+  casillas: 'M4 4.500h5v5H4zM4 14.500l2 2 3.500-4M13 7h7M13 16h7',
+  enlace: 'M10 14a4 4 0 0 0 5.700 0l3-3a4 4 0 0 0-5.700-5.700l-1 1M14 10a4 4 0 0 0-5.700 0l-3 3a4 4 0 0 0 5.700 5.700l1-1',
   marcar: 'M5 12.500l4.500 4.500L19 7.500',
   tocar: 'M8 5.500v13l10.500-6.500z',
   pausa: 'M8 5.500v13M16 5.500v13',
@@ -92,6 +94,22 @@ function conEnlaces(texto) {
   }
   trozos.push(texto.slice(fin));
   return trozos;
+}
+
+/** Como `conEnlaces`, con las casillas hechas (☑) tachadas. */
+function conCasillas(texto) {
+  if (!/^[☐☑]/m.test(texto)) return conEnlaces(texto);
+  return texto.split('\n').flatMap((linea, i) => [i ? '\n' : '',
+    el('span', { class: linea.startsWith('☑') ? 'hecha' : null }, conEnlaces(linea))]);
+}
+
+/** Los enlaces que traía una nota importada, con el título de la página. */
+function enlacesDe(nota, maximo = Infinity) {
+  return (nota.detalles.enlaces || []).filter(e => /^https?:\/\//.test(e.url)).slice(0, maximo).map(e =>
+    el('a', { class: 'enlace', href: e.url, target: '_blank', rel: 'noopener noreferrer',
+              title: [e.descripcion, e.url].filter(Boolean).join('\n'), onclick: x => x.stopPropagation() },
+      icono('enlace'), el('span', {}, el('b', { texto: e.titulo || e.url }),
+        el('small', { texto: e.url.replace(/^https?:\/\/(www\.)?/, '').split(/[/?#]/)[0] }))));
 }
 
 /* ---------- API ---------- */
@@ -173,7 +191,7 @@ const app = {
   lista: memoria.leer('lista', '') === '1',
 };
 
-const TIPOS = { texto: 'Solo texto', imagen: 'Con imágenes', voz: 'Notas de voz' };
+const TIPOS = { texto: 'Solo texto', lista: 'Listas', imagen: 'Con imágenes', voz: 'Notas de voz' };
 
 /** La vista va en la dirección (#categoria=3, #papelera…): se puede recargar o ir atrás. */
 function leerVista() {
@@ -266,6 +284,7 @@ function pintarMenu() {
   $('#menu-vistas').replaceChildren(
     enlace('#', 'nota', 'Todas', t.activas, clave === 'notas'),
     enlace('#tipo=texto', 'texto', TIPOS.texto, t.texto, valor === 'texto'),
+    enlace('#tipo=lista', 'casillas', TIPOS.lista, t.lista, valor === 'lista'),
     enlace('#tipo=imagen', 'imagen', TIPOS.imagen, t.imagen, valor === 'imagen'),
     enlace('#tipo=voz', 'micro', TIPOS.voz, t.voz, valor === 'voz'),
     enlace('#archivo', 'archivo', 'Archivo', t.archivadas, clave === 'archivo'),
@@ -368,8 +387,9 @@ function tarjeta(n) {
   if (n.titulo) dentro.append(el('h3', { texto: n.titulo }));
   if (n.texto.trim()) {
     const corta = !n.titulo && !n.adjuntos.length && n.texto.length < 60;
-    dentro.append(el('p', { class: corta ? 'corta' : null }, conEnlaces(n.texto.slice(0, 1500).trimEnd())));
+    dentro.append(el('p', { class: corta ? 'corta' : null }, conCasillas(n.texto.slice(0, 1500).trimEnd())));
   }
+  dentro.append(...enlacesDe(n, 2));
   dentro.append(...voces.slice(0, 3).map(a => reproductor(a)));
   if (voces.length > 3) dentro.append(el('p', { texto: `y ${plural(voces.length - 3, 'nota', 'notas')} de voz más` }));
   if (!n.titulo && !n.texto.trim() && !n.adjuntos.length) dentro.append(el('p', { class: 'vacia', texto: 'Nota vacía' }));
@@ -631,7 +651,7 @@ function nombreGrabacion(tipo) {
 /* ---------- Editor ---------- */
 
 const editor = { nota: null, sucio: false, reloj: 0, cadena: Promise.resolve(), nueva: false, tuvoAdjuntos: false, abierta: false, cerrando: false };
-const NOTA_NUEVA = { id: null, titulo: '', texto: '', color: '', fijada: false, archivada: false, papelera: null, categorias: [], adjuntos: [] };
+const NOTA_NUEVA = { id: null, titulo: '', texto: '', color: '', fijada: false, archivada: false, papelera: null, detalles: {}, categorias: [], adjuntos: [] };
 
 function abrirEditor(nota) {
   const categoria = app.vista.clave === 'categoria' && app.categorias.find(c => c.id === app.vista.valor);
@@ -672,8 +692,41 @@ function pintarEditor() {
   $('#e-paleta').replaceChildren(...app.colores.map(c => el('button', {
     type: 'button', class: c ? `color-${c}` : null, title: c || 'sin color', 'aria-label': c || 'sin color',
     'aria-pressed': String(c === n.color), onclick: () => cambiar({ color: c }) })));
+  $('#e-detalles').replaceChildren(...enlacesDe(n), el('p', { texto: detallesDe(n.detalles) }));
+  $('#e-detalles').hidden = !$('#e-detalles').textContent;
   $('#e-fechas').textContent = n.id ? (enPapelera ? `En la papelera desde el ${fechaLarga(n.papelera)}`
     : `Creada el ${fechaLarga(n.creada)} · Modificada el ${fechaLarga(n.modificada)}`) : '';
+}
+
+const detallesDe = d => [
+  d.fuente && `Importada de ${d.fuente}`,
+  d.compartida && `Compartida con ${d.compartida.map(x => (x === d.propietario ? `${x} (es suya)` : x)).join(', ')}`,
+  d.recordatorio && 'Tenía un recordatorio',
+  d.faltan && `Faltan archivos: ${d.faltan.join(', ')}`,
+].filter(Boolean).join(' · ');
+
+/** Dónde empieza la línea en la que está el cursor. */
+const inicioLinea = t => (t.selectionStart ? t.value.lastIndexOf('\n', t.selectionStart - 1) + 1 : 0);
+
+/** Pulsar una casilla del texto la marca o la desmarca. */
+function pulsarCasilla() {
+  const t = $('#e-texto'), inicio = inicioLinea(t), casilla = t.value[inicio];
+  if (t.readOnly || t.selectionStart !== t.selectionEnd || t.selectionStart - inicio > 1) return;
+  if (casilla !== '☐' && casilla !== '☑') return;
+  t.setRangeText(casilla === '☐' ? '☑' : '☐', inicio, inicio + 1, 'end');
+  t.oninput();
+}
+
+/** Enter en una casilla empieza la siguiente; en una vacía, termina la lista. */
+function seguirLista(e) {
+  const t = e.target, pos = t.selectionStart, inicio = inicioLinea(t);
+  if (e.key !== 'Enter' || e.shiftKey || e.isComposing || t.readOnly || pos !== t.selectionEnd) return;
+  const linea = t.value.slice(inicio).split('\n', 1)[0];
+  if (pos === inicio || !/^[☐☑]/.test(linea)) return;
+  e.preventDefault();
+  if (/^.\s*$/.test(linea)) t.setRangeText('', inicio, inicio + linea.length, 'end');
+  else t.setRangeText('\n☐ ', pos, pos, 'end');
+  t.oninput();
 }
 
 function ajustarAltura() {
@@ -1065,6 +1118,8 @@ function arrancar() {
   $('#e-titulo').oninput = escribiendo;
   $('#e-titulo').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); $('#e-texto').focus(); } };
   $('#e-texto').oninput = () => { ajustarAltura(); escribiendo(); };
+  $('#e-texto').onclick = pulsarCasilla;
+  $('#e-texto').onkeydown = seguirLista;
   $('#e-fijar').onclick = () => cambiar({ fijada: !editor.nota.fijada });
   $('#e-archivar').onclick = () => desdeEditor(editor.nota.archivada ? desarchivar : archivar);
   $('#e-papelera').onclick = () => desdeEditor(aPapelera);

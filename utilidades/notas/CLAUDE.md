@@ -14,7 +14,7 @@ Notas de texto, imágenes y notas de voz, con categorías y búsqueda. Interface
 | Quiero… | Está en |
 |---|---|
 | Qué es una nota, qué se puede cambiar, cómo se busca | `src/notas/cuaderno.py` |
-| El esquema de la base de datos | `cuaderno.py`: `ESQUEMA`, `VERSION_BD` y `_preparar` (con migración: ya hay cuadernos) |
+| El esquema de la base de datos | `cuaderno.py`: otra sentencia al final de `MIGRACIONES` (ya hay cuadernos: las anteriores no se tocan) |
 | Qué archivos se admiten, miniaturas | `adjuntos.py` |
 | Añadir una ruta a la API | `servidor.py`: `RUTAS` y su método |
 | La página: estructura / aspecto / comportamiento | `plantillas/notas.html` / `notas.css` / `notas.js` |
@@ -22,6 +22,7 @@ Notas de texto, imágenes y notas de voz, con categorías y búsqueda. Interface
 | Un color de nota | `COLORES` en `cuaderno.py` y `.color-x` en `notas.css` |
 | Comandos y opciones | `cli.py`, y la skill `.claude/skills/notas/SKILL.md` (una prueba comprueba que coinciden) |
 | La copia de seguridad | `copia.py` |
+| Importar de Google Keep | `keep.py` (el Takeout solo se lee) |
 
 ## Reglas de esta utilidad
 
