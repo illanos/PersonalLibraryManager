@@ -87,21 +87,39 @@ def hash_archivo(ruta: Path) -> str:
     return h.hexdigest()
 
 
-def listar_archivos(origen: Path, extensiones: set) -> list:
-    """Archivos con esas extensiones, sin entrar en carpetas internas ni ocultas.
+def recorrer_archivos(origen: Path, extensiones: set):
+    """`os.DirEntry` de los archivos con esas extensiones, sin entrar en carpetas internas
+    ni ocultas (ni en enlaces a carpetas), en cualquier orden.
 
-    También descarta los "._archivo" que macOS deja en tarjetas y discos externos.
+    También descarta los "._archivo" que macOS deja en tarjetas y discos externos. En
+    Windows, `entrada.stat()` sale de la propia lectura de la carpeta, sin otra llamada
+    al disco por archivo.
     """
-    encontrados = []
-    for raiz, carpetas, archivos in os.walk(origen):
-        carpetas[:] = [c for c in carpetas
-                       if c not in CARPETAS_EXCLUIDAS and not c.startswith(".")]
-        for nombre in archivos:
-            if nombre.startswith("._"):
+    pendientes = [os.fspath(origen)]
+    while pendientes:
+        try:
+            with os.scandir(pendientes.pop()) as it:
+                entradas = list(it)
+        except OSError:
+            continue
+        for entrada in entradas:
+            nombre = entrada.name
+            try:
+                es_carpeta = entrada.is_dir()
+            except OSError:
                 continue
-            if os.path.splitext(nombre)[1].lower() in extensiones:
-                encontrados.append(Path(raiz) / nombre)
-    return sorted(encontrados)
+            if es_carpeta:
+                if (nombre not in CARPETAS_EXCLUIDAS and not nombre.startswith(".")
+                        and not entrada.is_symlink()):
+                    pendientes.append(entrada.path)
+            elif (not nombre.startswith("._")
+                  and os.path.splitext(nombre)[1].lower() in extensiones):
+                yield entrada
+
+
+def listar_archivos(origen: Path, extensiones: set) -> list:
+    """Rutas ordenadas de `recorrer_archivos`."""
+    return sorted(Path(e.path) for e in recorrer_archivos(origen, extensiones))
 
 
 def nombre_libre(carpeta: Path, base: str, extension: str, reservados: set = None) -> Path:

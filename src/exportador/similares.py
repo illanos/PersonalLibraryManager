@@ -9,6 +9,7 @@ Solo usa Pillow. Nada se borra: las parecidas se marcan (informe, galería) y, s
 pide, al importar se omite la peor copia de cada grupo.
 """
 
+from collections import defaultdict
 from pathlib import Path
 
 from PIL import Image, ImageOps
@@ -65,21 +66,45 @@ def _proporciones_compatibles(a, b) -> bool:
     return abs(a - b) / max(a, b) <= TOLERANCIA_PROPORCION
 
 
+def _trozos(valor: int, umbral: int):
+    """Las `umbral + 1` bandas del hash, como claves (banda, bits de la banda)."""
+    bandas = umbral + 1
+    ancho = -(-BITS // bandas)
+    mascara = (1 << ancho) - 1
+    return [(b, (valor >> (b * ancho)) & mascara) for b in range(bandas)]
+
+
+def indice_bandas(valores: dict, umbral: int = UMBRAL) -> dict:
+    """{(banda, trozo): [claves]} de {clave: hash como entero}.
+
+    Si dos hashes difieren en `umbral` bits o menos, al menos una de sus `umbral + 1`
+    bandas coincide entera (principio del palomar): basta comparar dentro de cada cubo.
+    """
+    cubos = defaultdict(list)
+    for c, v in valores.items():
+        for trozo in _trozos(v, umbral):
+            cubos[trozo].append(c)
+    return cubos
+
+
+def candidatos(cubos: dict, valor: int, umbral: int = UMBRAL) -> set:
+    """Claves de `indice_bandas` que pueden estar a `umbral` bits o menos de `valor`."""
+    encontrados = set()
+    for trozo in _trozos(valor, umbral):
+        encontrados.update(cubos.get(trozo, ()))
+    return encontrados
+
+
 def agrupar(hashes: dict, proporciones: dict = None, umbral: int = UMBRAL) -> list:
     """Grupos (listas de claves, con 2 o más) de elementos parecidos entre sí.
 
     `hashes` es {clave: dhash}; `proporciones` (opcional) {clave: ancho/alto} evita unir
-    una foto con un recorte suyo. Divide el hash en `umbral + 1` bandas: si dos hashes
-    difieren en `umbral` bits o menos, al menos una banda coincide entera (principio
-    del palomar), así que solo se comparan los que comparten alguna banda.
+    una foto con un recorte suyo. Solo se comparan los que comparten alguna banda
+    (`indice_bandas`).
     """
     proporciones = proporciones or {}
-    claves = [c for c, h in hashes.items() if h and con_detalle(h)]
-    valores = {c: int(hashes[c], 16) for c in claves}
-    bandas = umbral + 1
-    ancho_banda = -(-BITS // bandas)
-
-    padre = {c: c for c in claves}
+    valores = {c: int(h, 16) for c, h in hashes.items() if h and con_detalle(h)}
+    padre = {c: c for c in valores}
 
     def raiz(c):
         while padre[c] != c:
@@ -87,31 +112,25 @@ def agrupar(hashes: dict, proporciones: dict = None, umbral: int = UMBRAL) -> li
             c = padre[c]
         return c
 
-    cubos = {}
-    for c in claves:
-        v = valores[c]
-        for b in range(bandas):
-            trozo = (v >> (b * ancho_banda)) & ((1 << ancho_banda) - 1)
-            cubos.setdefault((b, trozo), []).append(c)
-
-    comparados = set()
-    for miembros in cubos.values():
+    # Sin apuntar los pares ya comparados: repetir la comparación de dos hashes que
+    # comparten varias bandas cuesta menos que llevar la cuenta (con 43.000 fotos reales,
+    # 12 s en vez de 92), y unirlos dos veces no cambia nada
+    for miembros in indice_bandas(valores, umbral).values():
         if len(miembros) < 2:
             continue
-        for i, a in enumerate(miembros):
-            for b in miembros[i + 1:]:
-                par = (a, b)
-                if par in comparados:
-                    continue
-                comparados.add(par)
-                if ((valores[a] ^ valores[b]).bit_count() <= umbral
-                        and _proporciones_compatibles(proporciones.get(a), proporciones.get(b))):
-                    ra, rb = raiz(a), raiz(b)
-                    if ra != rb:
-                        padre[rb] = ra
+        hs = [valores[c] for c in miembros]
+        for i in range(len(miembros) - 1):
+            a, ha = miembros[i], hs[i]
+            for j in range(i + 1, len(miembros)):
+                if (ha ^ hs[j]).bit_count() <= umbral:
+                    b = miembros[j]
+                    if _proporciones_compatibles(proporciones.get(a), proporciones.get(b)):
+                        ra, rb = raiz(a), raiz(b)
+                        if ra != rb:
+                            padre[rb] = ra
 
     grupos = {}
-    for c in claves:
+    for c in valores:
         grupos.setdefault(raiz(c), []).append(c)
     return [g for g in grupos.values() if len(g) > 1]
 

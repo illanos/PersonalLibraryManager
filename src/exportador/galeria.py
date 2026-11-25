@@ -22,17 +22,21 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .catalogo import info_por_destino
-from .media_utils import (CARPETA_GALERIA, fecha_desde_nombre, fecha_mtime, listar_archivos,
-                         progreso)
+from .media_utils import (CARPETA_GALERIA, fecha_desde_nombre, fecha_mtime, progreso,
+                          recorrer_archivos)
 from .clasificacion import RE_CAPTURA, ambito, es_pegatina
 from . import lugares
-from .similares import UMBRAL, _proporciones_compatibles, agrupar, con_detalle, dhash
+from .similares import (BITS, MIN_DETALLE, TOLERANCIA_PROPORCION, UMBRAL,
+                        _proporciones_compatibles, agrupar, candidatos, con_detalle, dhash,
+                        indice_bandas)
 
 EXTENSIONES_FOTO = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"}
 EXTENSIONES_VIDEO = {".mp4", ".webm", ".mov", ".m4v"}
 EXTENSIONES_AUDIO = {".opus", ".mp3", ".m4a", ".aac", ".ogg", ".wav"}
 
 VERSION_INDICE = 2
+# Con qué se calcularon los grupos de parecidas de galeria.json: si cambia, se rehacen todos
+CRITERIO_PARECIDAS = [BITS, UMBRAL, MIN_DETALLE, TOLERANCIA_PROPORCION]
 MINIATURA_ALTO = 400           # las filas de la galería miden ~200 px (x2 en pantallas HiDPI)
 MINIATURA_ANCHO_MAX = 1200     # panorámicas
 PLANTILLA = Path(__file__).with_name("plantillas") / "galeria.html"
@@ -153,24 +157,31 @@ def etiquetas_automaticas(e: dict) -> list:
     return [nombre for nombre, cumple in reglas if cumple]
 
 
-def _cargar_indice_previo(carpeta: Path) -> dict:
+def _cargar_indice_previo(carpeta: Path) -> tuple:
+    """({src: elemento}, ¿sus grupos de parecidas valen?) del galeria.json anterior."""
     try:
         datos = json.loads((carpeta / "galeria.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {}
+        return {}, False
     if not isinstance(datos, dict) or datos.get("version") != VERSION_INDICE:
-        return {}
-    return {e["src"]: e for e in datos.get("elementos", [])
-            if isinstance(e, dict) and "src" in e}
+        return {}, False
+    previos = {e["src"]: e for e in datos.get("elementos", [])
+               if isinstance(e, dict) and "src" in e}
+    return previos, datos.get("criterio_parecidas") == CRITERIO_PARECIDAS
 
 
-def _elemento(ruta: Path, carpeta: Path, previos: dict, hay_ffmpeg: bool):
-    """(elemento, reutilizado). Reutiliza metadatos y miniatura si el archivo no cambió."""
-    rel = ruta.relative_to(carpeta).as_posix()
-    st = ruta.stat()
+def _elemento(ruta: Path, carpeta: Path, previos: dict, hay_ffmpeg: bool, st=None,
+              miniaturas: set = None, rel: str = None):
+    """(elemento, reutilizado). Reutiliza metadatos y miniatura si el archivo no cambió.
+
+    `st` (su stat), `miniaturas` (nombres de las que ya existen) y `rel` (su ruta en la
+    biblioteca, con '/') ahorran trabajo por archivo cuando ya se tienen."""
+    rel = rel or ruta.relative_to(carpeta).as_posix()
+    st = st or ruta.stat()
     tipo = _tipo(ruta)
     thumb_rel = f"{CARPETA_GALERIA}/thumbs/{_clave(rel)}.jpg"
     thumb = carpeta / thumb_rel
+    hay_miniatura = thumb.name in miniaturas if miniaturas is not None else thumb.exists()
 
     previo = previos.get(rel)
     reutilizado = bool(previo and previo.get("bytes") == st.st_size
@@ -190,7 +201,7 @@ def _elemento(ruta: Path, carpeta: Path, previos: dict, hay_ffmpeg: bool):
             **{k: v for k, v in meta.items() if v},
         }
 
-    if not reutilizado or not thumb.exists():
+    if not reutilizado or not hay_miniatura:
         try:
             if tipo == "foto":
                 _miniatura_foto(ruta, thumb)
@@ -198,35 +209,58 @@ def _elemento(ruta: Path, carpeta: Path, previos: dict, hay_ffmpeg: bool):
                 _miniatura_video(ruta, thumb, elemento.get("duracion", 0))
         except Exception as exc:
             print(f"  miniatura omitida para {rel}: {exc}")
-    elemento["thumb"] = thumb_rel if thumb.exists() else ""
+        hay_miniatura = thumb.exists()
+    elemento["thumb"] = thumb_rel if hay_miniatura else ""
     if tipo == "foto" and "dhash" not in elemento:
         # Hash perceptual: de la miniatura si existe (mucho más rápido; da el mismo hash)
         try:
-            elemento["dhash"] = dhash(thumb if thumb.exists() else ruta)
+            elemento["dhash"] = dhash(thumb if hay_miniatura else ruta)
         except Exception:
             pass
     return elemento, reutilizado
+
+
+def _archivos_con_stat(carpeta: Path) -> list:
+    """[(ruta, ruta relativa con '/', stat)] de lo que muestra la galería, ordenado.
+
+    La ruta relativa sale del texto de la ruta: con decenas de miles de archivos,
+    `Path.relative_to` y ordenar objetos `Path` se notan."""
+    prefijo = len(os.path.join(os.fspath(carpeta), ""))
+    archivos = []
+    for entrada in recorrer_archivos(
+            carpeta, EXTENSIONES_FOTO | EXTENSIONES_VIDEO | EXTENSIONES_AUDIO):
+        try:
+            st = entrada.stat()
+        except OSError:   # desaparecido mientras se recorría
+            continue
+        rel = entrada.path[prefijo:].replace(os.sep, "/")
+        archivos.append((Path(entrada.path), rel, st))
+    return sorted(archivos, key=lambda t: t[1])
 
 
 def construir_indice(carpeta: Path, regenerar: bool = False, hilos: int = 0):
     """Lista de elementos (más recientes primero) y estadísticas de la regeneración."""
     carpeta_thumbs = carpeta / CARPETA_GALERIA / "thumbs"
     carpeta_thumbs.mkdir(parents=True, exist_ok=True)
-    previos = {} if regenerar else _cargar_indice_previo(carpeta)
+    previos, grupos_validos = ({}, False) if regenerar else _cargar_indice_previo(carpeta)
     catalogo = info_por_destino(carpeta)
     hay_ffmpeg = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
 
-    rutas = listar_archivos(carpeta, EXTENSIONES_FOTO | EXTENSIONES_VIDEO | EXTENSIONES_AUDIO)
+    archivos = _archivos_con_stat(carpeta)
+    with os.scandir(carpeta_thumbs) as it:
+        miniaturas = {e.name for e in it}
     hilos = hilos or min(8, os.cpu_count() or 2)
     resultados = []
     with ThreadPoolExecutor(hilos) as pool:
         for n, resultado in enumerate(pool.map(
-                lambda r: _elemento(r, carpeta, previos, hay_ffmpeg), rutas), 1):
+                lambda t: _elemento(t[0], carpeta, previos, hay_ffmpeg, t[2], miniaturas, t[1]),
+                archivos), 1):
             resultados.append(resultado)
-            progreso("avance", "galeria", paso="Miniaturas", hecho=n, total=len(rutas),
+            progreso("avance", "galeria", paso="Miniaturas", hecho=n, total=len(archivos),
                      archivo=resultado[0]["src"])
 
-    grupos = marcar_parecidas([e for e, _ in resultados])
+    _agrupar_parecidas(resultados, previos if grupos_validos else {})
+    grupos = len({e["parecidas"] for e, _ in resultados if e.get("parecidas")})
 
     elementos = []
     for elemento, _ in resultados:
@@ -268,6 +302,24 @@ def construir_indice(carpeta: Path, regenerar: bool = False, hilos: int = 0):
     return elementos, stats
 
 
+def _agrupar_parecidas(resultados: list, previos: dict):
+    """Grupos de parecidas de [(elemento, reutilizado)].
+
+    Con `previos` (el índice anterior, si sus grupos valen) solo se rehacen los grupos que
+    tocan las fotos nuevas, cambiadas o desaparecidas: comparar toda la biblioteca entre
+    sí tarda (12 s con 43.000 fotos) y, si nada ha cambiado, no hace falta."""
+    elementos = [e for e, _ in resultados]
+    if not previos:
+        marcar_parecidas(elementos)
+        return
+    presentes = {e["src"] for e in elementos}
+    nuevos = [e["src"] for e, reutilizado in resultados
+              if not reutilizado or e.get("dhash") != previos[e["src"]].get("dhash")]
+    quitados = {p.get("parecidas") for src, p in previos.items() if src not in presentes}
+    quitados |= {previos[src].get("parecidas") for src in nuevos if src in previos}
+    actualizar_parecidas(elementos, quitados, nuevos)
+
+
 def marcar_parecidas(elementos: list) -> int:
     """Pone `parecidas` (número de grupo) a las fotos casi idénticas. Devuelve cuántos grupos."""
     fotos = {e["src"]: e for e in elementos if e.get("dhash")}
@@ -285,8 +337,8 @@ def marcar_parecidas(elementos: list) -> int:
 def actualizar_parecidas(elementos: list, numeros_quitados=(), nuevos=()):
     """Como `marcar_parecidas`, pero rehace solo los grupos afectados: los de número en
     `numeros_quitados` (de fotos que se han quitado) y los que tocan las fotos `nuevos`
-    (srcs añadidos). Da el mismo agrupamiento sin comparar toda la biblioteca entre sí,
-    que con decenas de miles de fotos tarda más de un minuto."""
+    (srcs añadidos, o cambiados: su número anterior va en `numeros_quitados`). Da el
+    mismo agrupamiento sin comparar toda la biblioteca entre sí."""
     fotos = {e["src"]: e for e in elementos if e.get("dhash")}
     proporciones = {src: e["ancho"] / e["alto"] for src, e in fotos.items()
                     if e.get("ancho") and e.get("alto")}
@@ -297,6 +349,7 @@ def actualizar_parecidas(elementos: list, numeros_quitados=(), nuevos=()):
     tocados = {n for n in numeros_quitados if n}
     afectados = set()
     valores = {src: int(e["dhash"], 16) for src, e in fotos.items() if con_detalle(e["dhash"])}
+    cubos = indice_bandas(valores) if nuevos else {}
     for nuevo in nuevos:
         if nuevo not in fotos:
             continue
@@ -304,7 +357,8 @@ def actualizar_parecidas(elementos: list, numeros_quitados=(), nuevos=()):
         v = valores.get(nuevo)
         if v is None:
             continue
-        for src, w in valores.items():
+        for src in candidatos(cubos, v):
+            w = valores[src]
             if (src != nuevo and (v ^ w).bit_count() <= UMBRAL
                     and _proporciones_compatibles(proporciones.get(nuevo), proporciones.get(src))):
                 afectados.add(src)
@@ -363,7 +417,7 @@ def generar_galeria(carpeta: Path, regenerar: bool = False, caras: bool = False)
 
     from .caras import leer_nombres
     indice = {"version": VERSION_INDICE, "titulo": carpeta.name, "elementos": elementos,
-              "nombres_caras": leer_nombres(carpeta)}
+              "nombres_caras": leer_nombres(carpeta), "criterio_parecidas": CRITERIO_PARECIDAS}
     _escribir(carpeta / "galeria.json",
               json.dumps(indice, ensure_ascii=False, separators=(",", ":")))
     _escribir(carpeta / "galeria.html", PLANTILLA.read_text(encoding="utf-8"))
