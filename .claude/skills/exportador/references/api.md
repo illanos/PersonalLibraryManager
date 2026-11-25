@@ -5,7 +5,7 @@ sus opciones en una *dataclass*. Las funciones imprimen su progreso en la consol
 la CLI, y respetan las mismas garantías (origen de solo lectura, `simular`, incremental).
 
 Importación: con el paquete instalado, `import exportador`; desde el proyecto sin instalar,
-añadir `<raíz>/src` a `sys.path` (o `PYTHONPATH=src`).
+añadir `<raíz>/utilidades/fotos/src` a `sys.path` (o `PYTHONPATH=utilidades/fotos/src`).
 
 ## Importar
 

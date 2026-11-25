@@ -2,8 +2,8 @@
 
 | Mensaje o síntoma | Causa | Qué hacer |
 |---|---|---|
-| `No module named exportador` | El paquete no está instalado y no se ejecuta desde `src/` | `PYTHONPATH=src` desde la raíz (o `cd src`), o, con permiso del usuario, `pip install -e ".[todo]"` |
-| `Falta la librería Pillow` | Sin Pillow | `pip install Pillow` (o `pip install -e .`) |
+| `No module named exportador` | El paquete no está instalado y no se ejecuta desde `src/` | `PYTHONPATH=utilidades/fotos/src` desde la raíz del monorepo, o, con permiso del usuario, `pip install -e "utilidades/fotos[todo]"` |
+| `Falta la librería Pillow` | Sin Pillow | `pip install Pillow` (o `pip install -e utilidades/fotos`) |
 | `FFmpeg no está disponible en la terminal` | Sin FFmpeg (o terminal abierta antes de instalarlo) | `winget install Gyan.FFmpeg` y abrir una terminal nueva. En `todo`/`google` los vídeos se omiten con un aviso; `videos` no arranca |
 | `AVISO: se omiten N foto(s) HEIC/HEIF` | Falta `pillow-heif` | `pip install pillow-heif` y repetir el mismo comando: solo importará esas |
 | `AVISO: se omiten las caras porque falta OpenCV` | `--caras` sin `opencv-python` | `pip install opencv-python` |
@@ -33,4 +33,4 @@
 
 Si el problema no está aquí: lee la salida completa (los avisos dicen qué falta), el
 informe CSV de la ejecución (`ERROR` con su detalle) y, para dudas de diseño,
-`doc/ARQUITECTURA.md`.
+`utilidades/fotos/doc/ARQUITECTURA.md`.

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notas</title>
+<link rel="icon" href="/estaticos/icono.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/estaticos/notas.css">
+<script src="/estaticos/notas.js" defer></script>
+</head>
+<body>
+
+<header id="cabecera">
+  <button class="ico" id="b-menu" data-icono="menu" aria-label="Mostrar u ocultar el menú" aria-expanded="true"></button>
+  <a class="marca" href="#"><img src="/estaticos/icono.svg" alt="" width="28" height="28"><span>Notas</span></a>
+  <label class="buscador">
+    <span data-icono="lupa" aria-hidden="true"></span>
+    <input id="buscar" type="search" placeholder="Buscar en las notas" autocomplete="off"
+           aria-label="Buscar en las notas" title="Todas las palabras · &quot;frase exacta&quot; · -excluir">
+  </label>
+  <div class="opciones">
+    <select id="orden" aria-label="Ordenar por">
+      <option value="modificada">Últimos cambios</option>
+      <option value="creada">Más nuevas</option>
+      <option value="titulo">Título</option>
+    </select>
+    <button class="ico" id="b-agrupar" data-icono="agrupar" aria-pressed="false" title="Agrupar por categoría"></button>
+    <button class="ico" id="b-lista" data-icono="lista" aria-pressed="false" title="Ver en lista"></button>
+    <button class="ico" id="b-tema" data-icono="tema" title="Tema claro u oscuro"></button>
+  </div>
+</header>
+
+<div id="seleccion" role="toolbar" aria-label="Notas seleccionadas" hidden>
+  <button class="ico" id="s-cerrar" data-icono="cerrar" title="Quitar la selección"></button>
+  <strong id="s-cuantas"></strong>
+  <div id="s-acciones"></div>
+</div>
+
+<div id="cuerpo">
+  <nav id="menu" aria-label="Secciones">
+    <div id="menu-vistas"></div>
+    <div class="menu-titulo"><span>Categorías</span>
+      <button class="ico peq" id="b-categorias" data-icono="lapiz" title="Crear, renombrar o quitar categorías"></button></div>
+    <div id="menu-categorias"></div>
+    <div class="menu-pie">
+      <a id="b-copia" href="/api/copia" download><span data-icono="descargar"></span>Descargar copia</a>
+      <p id="donde"></p>
+    </div>
+  </nav>
+
+  <main>
+    <section id="componer" aria-label="Nueva nota">
+      <button id="c-texto">Escribe una nota…</button>
+      <button class="ico" id="c-imagen" data-icono="imagen" title="Nueva nota con imágenes"></button>
+      <button class="ico" id="c-voz" data-icono="micro" title="Grabar una nota de voz"></button>
+    </section>
+    <div id="barra-vista">
+      <h1 id="titulo-vista"></h1>
+      <span id="cuantas"></span>
+      <button class="boton peligro" id="b-vaciar" hidden>Vaciar papelera</button>
+    </div>
+    <div id="notas"></div>
+    <div id="centinela"></div>
+    <p id="vacio" hidden></p>
+  </main>
+</div>
+
+<dialog id="editor" aria-label="Nota">
+  <div class="hoja">
+    <div class="desplazable">
+      <div id="e-imagenes" class="mosaico grande"></div>
+      <div class="e-cab">
+        <input id="e-titulo" type="text" placeholder="Título" maxlength="500" autocomplete="off" aria-label="Título">
+        <button class="ico" id="e-fijar" data-icono="chincheta" aria-pressed="false" title="Fijar arriba"></button>
+      </div>
+      <textarea id="e-texto" placeholder="Escribe una nota…" rows="3" aria-label="Texto de la nota"></textarea>
+      <div id="e-voces"></div>
+      <div id="e-grabadora" hidden>
+        <span class="punto" aria-hidden="true"></span>
+        <span id="g-tiempo" role="timer">0:00</span>
+        <canvas id="g-nivel" width="360" height="40" aria-hidden="true"></canvas>
+        <button class="ico" id="g-pausa" data-icono="pausa" title="Pausar"></button>
+        <button class="ico" id="g-descartar" data-icono="papelera" title="Descartar la grabación"></button>
+        <button class="boton principal" id="g-listo">Guardar</button>
+      </div>
+      <div id="e-subidas"></div>
+      <div id="e-categorias">
+        <div id="e-chips" class="chips"></div>
+        <input id="e-categoria" type="text" list="lista-categorias" placeholder="+ Categoría" maxlength="60"
+               autocomplete="off" aria-label="Añadir categoría">
+        <datalist id="lista-categorias"></datalist>
+      </div>
+      <p id="e-fechas"></p>
+    </div>
+    <div id="e-conflicto" role="alert" hidden>
+      <p>Esta nota ha cambiado en otra ventana mientras la editabas.</p>
+      <div>
+        <button class="boton" id="k-mia">Guardar lo mío encima</button>
+        <button class="boton" id="k-otra">Usar lo de la otra ventana</button>
+        <button class="boton" id="k-ambas">Guardar lo mío como otra nota</button>
+      </div>
+    </div>
+    <div id="e-paleta" hidden role="group" aria-label="Color de la nota"></div>
+    <footer>
+      <div class="e-acciones">
+        <button class="ico" id="e-imagen" data-icono="imagen" title="Añadir imágenes o audios"></button>
+        <button class="ico" id="e-voz" data-icono="micro" title="Grabar una nota de voz"></button>
+        <button class="ico" id="e-color" data-icono="paleta" aria-expanded="false" title="Color"></button>
+        <button class="ico" id="e-archivar" data-icono="archivo" aria-pressed="false" title="Archivar"></button>
+        <button class="ico" id="e-papelera" data-icono="papelera" title="Mandar a la papelera"></button>
+      </div>
+      <div class="e-acciones" id="e-acciones-papelera" hidden>
+        <button class="boton" id="e-restaurar">Restaurar</button>
+        <button class="boton peligro" id="e-eliminar">Eliminar para siempre</button>
+      </div>
+      <span id="e-estado" role="status"></span>
+      <button class="boton" id="e-cerrar">Cerrar</button>
+    </footer>
+  </div>
+</dialog>
+
+<dialog id="visor" aria-label="Imagen">
+  <img id="v-imagen" alt="">
+  <div class="v-barra">
+    <span id="v-nombre"></span>
+    <a class="ico" id="v-descargar" data-icono="descargar" title="Descargar"></a>
+    <button class="ico" id="v-cerrar" data-icono="cerrar" title="Cerrar"></button>
+  </div>
+  <button class="ico" id="v-anterior" data-icono="izquierda" title="Anterior"></button>
+  <button class="ico" id="v-siguiente" data-icono="derecha" title="Siguiente"></button>
+</dialog>
+
+<dialog id="d-categorias" class="caja" aria-labelledby="dc-titulo">
+  <h2 id="dc-titulo">Categorías</h2>
+  <form id="dc-nueva" method="dialog">
+    <input type="text" placeholder="Nueva categoría" maxlength="60" aria-label="Nueva categoría" autocomplete="off">
+    <button class="boton principal">Crear</button>
+  </form>
+  <ul id="dc-lista"></ul>
+  <div class="caja-pie"><button class="boton" id="dc-cerrar">Cerrar</button></div>
+</dialog>
+
+<dialog id="d-poner" class="caja" aria-labelledby="dp-titulo">
+  <h2 id="dp-titulo">Poner categoría</h2>
+  <form id="dp-nueva" method="dialog">
+    <input type="text" list="lista-categorias" placeholder="Nombre de la categoría" maxlength="60"
+           aria-label="Nombre de la categoría" autocomplete="off">
+    <button class="boton principal">Poner</button>
+  </form>
+  <div id="dp-existentes" class="chips"></div>
+  <div class="caja-pie"><button class="boton" id="dp-cerrar">Cancelar</button></div>
+</dialog>
+
+<dialog id="d-pregunta" class="caja" aria-labelledby="pr-titulo">
+  <h2 id="pr-titulo"></h2>
+  <p id="pr-texto"></p>
+  <div class="caja-pie">
+    <button class="boton" id="pr-no">Cancelar</button>
+    <button class="boton" id="pr-si"></button>
+  </div>
+</dialog>
+
+<div id="soltar" hidden><span>Suelta aquí imágenes o audios</span></div>
+<div id="avisos" aria-live="polite"></div>
+<input type="file" id="elegir" multiple hidden
+       accept="image/jpeg,image/png,image/gif,image/webp,image/avif,image/bmp,audio/*,.opus,.m4a">
+
+</body>
+</html>

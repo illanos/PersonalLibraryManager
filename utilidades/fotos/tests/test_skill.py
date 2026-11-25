@@ -8,7 +8,8 @@ from pathlib import Path
 
 from exportador.cli import construir_parser
 
-SKILL = Path(__file__).resolve().parents[1] / ".claude" / "skills" / "exportador"
+# Las skills están en la raíz del monorepo: tests -> fotos -> utilidades -> raíz
+SKILL = Path(__file__).resolve().parents[3] / ".claude" / "skills" / "exportador"
 REGENERAR = "python .claude/skills/exportador/scripts/opciones.py --escribir"
 # Opciones de los scripts de la propia skill, no de la CLI
 OPCIONES_SCRIPTS = {"--escribir", "--buscar", "--informe"}

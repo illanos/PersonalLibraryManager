@@ -1,6 +1,6 @@
 ---
 name: exportador
-description: Experta en usar el Exportador (el paquete Python `exportador` de este proyecto) para importar, organizar, renombrar y optimizar fotos, vídeos y notas de voz; generar y servir la galería web (caras, lugares, favoritos); importar un Takeout de Google Fotos; fusionar dos colecciones sin duplicados quedándose con la mejor copia; limpiar fotos repetidas con papelera; reorganizar una biblioteca ya importada y usar el panel web. Úsala siempre que el usuario quiera hacer algo con sus fotos, vídeos o audios o con su biblioteca (volcar el móvil o una tarjeta, separar WhatsApp, pasar fotos de Google Fotos, quitar duplicados, ver la galería, poner nombre a caras, fechas raras, informes CSV, catálogo, papelera, espacio en disco), cuando pregunte qué comando u opción usar, por qué un archivo acabó donde está o no se importó, o cómo usar el paquete desde Python, aunque no nombre la herramienta ni el comando.
+description: Experta en usar el Exportador (el gestor de fotos: paquete Python `exportador`, en `utilidades/fotos` de este monorepo) para importar, organizar, renombrar y optimizar fotos, vídeos y notas de voz; generar y servir la galería web (caras, lugares, favoritos); importar un Takeout de Google Fotos; fusionar dos colecciones sin duplicados quedándose con la mejor copia; limpiar fotos repetidas con papelera; reorganizar una biblioteca ya importada y usar el panel web. Úsala siempre que el usuario quiera hacer algo con sus fotos, vídeos o audios o con su biblioteca (volcar el móvil o una tarjeta, separar WhatsApp, pasar fotos de Google Fotos, quitar duplicados, ver la galería, poner nombre a caras, fechas raras, informes CSV, catálogo, papelera, espacio en disco), cuando pregunte qué comando u opción usar, por qué un archivo acabó donde está o no se importó, o cómo usar el paquete desde Python, aunque no nombre la herramienta ni el comando. No es para apuntar o buscar notas personales (texto, imágenes o grabaciones en una libreta) - eso es la skill `notas`.
 ---
 
 # Exportador: guía de uso experta
@@ -23,7 +23,7 @@ Garantías del programa que debes conocer (y respetar al explicar o ejecutar):
 
 ## 1. Cómo ejecutarlo
 
-Raíz del proyecto: la carpeta que contiene `pyproject.toml` (esta skill está en
+Carpeta del exportador: `<raíz del monorepo>/utilidades/fotos` (esta skill está en
 `<raíz>/.claude/skills/exportador/`). Comprueba primero cómo se puede lanzar:
 
 ```bash
@@ -33,12 +33,13 @@ python -m exportador -h
 - Si funciona, el paquete está instalado: usa `python -m exportador <comando> …` (o
   `exportador <comando> …`, que es lo mismo).
 - Si dice `No module named exportador`, ejecútalo desde el código del proyecto sin instalar:
-  `PYTHONPATH=src python -m exportador …` (bash) o `$env:PYTHONPATH="src"; python -m
-  exportador …` (PowerShell), desde la raíz. Instalarlo (`pip install -e ".[todo]"`) cambia
-  el Python del usuario: propónselo, no lo hagas sin que diga que sí.
+  `PYTHONPATH=utilidades/fotos/src python -m exportador …` (bash) o
+  `$env:PYTHONPATH="utilidades/fotos/src"; python -m exportador …` (PowerShell), desde la
+  raíz del monorepo. Instalarlo (`pip install -e "utilidades/fotos[todo]"`) cambia el Python
+  del usuario: propónselo, no lo hagas sin que diga que sí.
 - Las dependencias opcionales y FFmpeg se comprueban en la sección 4.
 
-Para quien no quiera terminal existe el **panel web**: `panel.bat` (doble clic, Windows) o
+Para quien no quiera terminal existe el **panel web**: `fotos.bat` en la raíz (doble clic, Windows) o
 `python -m exportador panel`. Muestra las mismas opciones, simula, ejecuta y enseña el
 progreso. Recomiéndalo cuando el usuario prefiera algo visual o la ejecución vaya a ser larga.
 
@@ -152,5 +153,5 @@ y acciones de los informes, reglas de fecha y nombre) puedes explicar cualquier 
   origen, catálogo SQLite, informes CSV y sus acciones, papelera, galería.
 - `references/api.md` — usar el paquete desde Python (funciones, opciones, resúmenes).
 - `references/problemas.md` — mensajes de error y avisos, y qué hacer con cada uno.
-- `doc/ARQUITECTURA.md` (en la raíz del proyecto) — el porqué de cada decisión de diseño,
+- `utilidades/fotos/doc/ARQUITECTURA.md` (en el monorepo) — el porqué de cada decisión de diseño,
   con todo detalle. Consúltalo para dudas finas sobre fusionar, metadatos o Takeout.

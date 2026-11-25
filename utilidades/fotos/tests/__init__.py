@@ -1,4 +1,4 @@
-"""Pruebas del exportador:  python -m unittest discover -s tests -t .
+"""Pruebas del exportador:  python -m unittest discover -s tests -t .   (en utilidades/fotos)
 
 Usan el código de src/ de este mismo proyecto aunque no esté instalado (o haya otra
 copia instalada en modo editable desde otra carpeta).
