@@ -20,6 +20,8 @@
 | La galería sale en blanco o pide servirla | Se abrió `galeria.html` con doble clic (`file://`) | `galeria <biblioteca> --servir` |
 | El puerto está ocupado | Otro servidor en 8080/8765 | Prueba solo los siguientes; o `--puerto N` |
 | No aparecen las fotos de WhatsApp en la galería | Van en su vista aparte | Botón *WhatsApp* de la galería |
+| Faltan vídeos cortos en *Vídeos* | Los de menos de 5 s van en su propia categoría | Botón *Fotos en movimiento* de la galería (o *Todo*) |
+| No sale el botón *Fotos en movimiento* | No hay vídeos de menos de 5 s, se está en la vista WhatsApp o la galería es anterior a esta categoría | Volver a generarla: `galeria <biblioteca>` (no hace falta `--regenerar`) |
 | Una foto borrada a mano ha vuelto | La importación incremental trae lo que falta | Quitarla con *Limpiar repetidas* (papelera + no reimportar) |
 | Fotos con *Fecha dudosa* | Sin EXIF ni fecha en el nombre: se usó la del archivo | Normal en fotos reenviadas o descargadas. Si vienen de Google, el JSON del Takeout o una fusión con la copia buena lo arreglan |
 | Vídeos `SIN_CAMBIOS` o fotos que pesan igual | Recomprimir no compensaba | Correcto: se conserva el original tal cual |

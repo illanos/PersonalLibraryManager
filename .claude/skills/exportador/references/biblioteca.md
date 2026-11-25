@@ -134,12 +134,15 @@ por qué gana una y qué metadatos gana.
 
 ## 7. Galería
 
-- `galeria.json`: `{version, titulo, elementos, nombres_caras}`. Cada elemento: `tipo`,
-  `src` (ruta relativa), `nombre`, `carpeta`, `fecha`, `fuente_fecha`, `bytes`, `ancho`,
-  `alto`, `thumb`, `dhash`, `nombre_original` y, si los hay, cámara, etiquetas, personas,
-  lugar, GPS, título, descripción, valoración…
-- Etiquetas automáticas: Selfies, Capturas, WhatsApp, Pegatinas, Con ubicación, Con
-  estrellas, Verticales, Panorámicas, Fecha dudosa, Hora aproximada, Parecidas.
+- `galeria.json`: `{version, titulo, elementos, nombres_caras, segundos_movimiento}`. Cada
+  elemento: `tipo`, `src` (ruta relativa), `nombre`, `carpeta`, `fecha`, `fuente_fecha`,
+  `bytes`, `ancho`, `alto`, `thumb`, `dhash`, `nombre_original` y, si los hay, duración,
+  cámara, etiquetas, personas, lugar, GPS, título, descripción, valoración…
+- Etiquetas automáticas (`auto`): Selfies, Capturas, WhatsApp, Pegatinas, Fotos en movimiento,
+  Con ubicación, Con estrellas, Verticales, Panorámicas, Fecha dudosa, Hora aproximada,
+  Parecidas.
+- *Fotos en movimiento*: vídeos de menos de 5 s que no son de WhatsApp. Siguen siendo
+  `tipo: "video"` y siguen en su carpeta; la galería los saca de *Vídeos* y les da un botón.
 - `_galeria/thumbs/` miniaturas; `favoritos.json`; `caras.sqlite` (caras analizadas, cada
   foto una vez); `personas.json` (nombres puestos a los grupos de caras).
 - Se sirve en `http://127.0.0.1:<puerto>/galeria.html` (8080 o el siguiente libre), solo

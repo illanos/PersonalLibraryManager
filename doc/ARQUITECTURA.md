@@ -32,7 +32,8 @@ Exportador/
 │       │                       reorganizar, fusionar, galeria, panel
 │       ├── media_utils.py      Utilidades comunes (fechas, nombres, listado, resumen, progreso)
 │       ├── catalogo.py         Catálogo SQLite de lo importado y descartado + informe CSV
-│       ├── clasificacion.py    WhatsApp, pegatinas y capturas; carpeta de destino de cada cosa
+│       ├── clasificacion.py    WhatsApp, pegatinas, capturas y fotos en movimiento; carpeta
+│       │                       de destino de cada cosa
 │       ├── similares.py        Hash perceptual (dHash) y grupos de fotos parecidas
 │       ├── danados.py          Detección e informe de archivos dañados
 │       ├── metadatos.py        Lectura y conservación de metadatos de fotos (EXIF/XMP/IPTC)
@@ -368,11 +369,19 @@ Se conservan al exportar y aparecen en la galería al regenerarla.
 - **Línea de tiempo** por meses, con filas justificadas y carga por lotes (miles de fotos).
 - **Vista WhatsApp** aparte (botón *WhatsApp*): lo de WhatsApp nunca se mezcla con la línea
   de tiempo. Botón para ocultar las capturas (o, en la vista WhatsApp, las pegatinas).
-- **Tipos**: fotos, vídeos y **audio** (notas de voz con reproductor en el visor).
+- **Tipos**: fotos, vídeos, fotos en movimiento y **audio** (notas de voz con reproductor en
+  el visor). Los años cuentan lo del tipo elegido.
+- **Fotos en movimiento** (botón propio): los vídeos que duran menos de
+  `clasificacion.SEGUNDOS_MOVIMIENTO` (5 s; los de 5 s justos, no), que son sobre todo los clips
+  de las fotos con movimiento. Salen en *Todo* y con su botón, pero no en *Vídeos* ni al buscar
+  «vídeo». Los de duración desconocida siguen en *Vídeos* y los de WhatsApp, en su vista. Es una
+  etiqueta automática que se calcula en cada regeneración con la `duracion` de `galeria.json`
+  (en décimas de segundo), también en lo que no ha cambiado: no mueve ni renombra archivos, no
+  toca el catálogo y, si se cambia el umbral, basta con volver a generar la galería.
 - **Etiquetas**: panel con contadores agrupado en *Etiquetas*, *Personas*, *Caras sin
   nombre*, *Lugares*, *Países*, *Cámaras* y *Automáticas* (Selfies, Capturas, WhatsApp,
-  Pegatinas, Con ubicación, Con estrellas, Verticales, Panorámicas, Fecha dudosa, Hora
-  aproximada, Parecidas). Los filtros se combinan entre sí.
+  Pegatinas, Fotos en movimiento, Con ubicación, Con estrellas, Verticales, Panorámicas,
+  Fecha dudosa, Hora aproximada, Parecidas). Los filtros se combinan entre sí.
 - **Parecidas**: aviso en el visor con las miniaturas del grupo para comparar (no se borra nada).
 - **Limpiar repetidas** (botón en la barra, o `http://127.0.0.1:<puerto>/limpiar.html`): ver
   la sección siguiente.

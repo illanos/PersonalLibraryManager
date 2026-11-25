@@ -1,4 +1,4 @@
-"""Clasificación del contenido por su procedencia: WhatsApp, pegatinas, capturas.
+"""Clasificación del contenido: WhatsApp, pegatinas, capturas y fotos en movimiento.
 
 El contenido de WhatsApp (fotos, vídeos, pegatinas, notas de voz) va **separado** del
 resto de la biblioteca, en `WhatsApp/`, y la galería no lo mezcla con la línea de
@@ -12,6 +12,10 @@ tiempo: solo se ve eligiendo explícitamente la vista «WhatsApp».
 
 Las capturas de pantalla se quedan en la línea de tiempo, con su etiqueta, y la
 galería permite ocultarlas.
+
+Los vídeos muy cortos son «fotos en movimiento»: sobre todo, los clips de las fotos con
+movimiento del móvil. Es solo una clasificación de la galería, calculada de la duración:
+ni cambian de carpeta ni de nombre.
 """
 
 import re
@@ -28,6 +32,7 @@ _RE_NOMBRE_WA = re.compile(r"^(IMG|VID|AUD|PTT|STK|DOC|GIF)-\d{8}-WA\d+", re.IGN
 _RE_PEGATINA = re.compile(r"^STK-", re.IGNORECASE)
 RE_CAPTURA = re.compile(r"screen[ _-]?shot|screenrecord|captura|pantallazo", re.IGNORECASE)
 LADO_MAX_PEGATINA = 512   # las pegatinas de WhatsApp son de 512x512
+SEGUNDOS_MOVIMIENTO = 5   # un vídeo más corto es una «foto en movimiento»
 
 
 def _carpetas(ruta: PurePath) -> list:
@@ -56,6 +61,12 @@ def es_captura(ruta) -> bool:
     ruta = PurePath(ruta)
     return bool(RE_CAPTURA.search(ruta.name)) or any(
         c in ("screenshots", "capturas", "capturas de pantalla") for c in _carpetas(ruta))
+
+
+def es_foto_en_movimiento(tipo: str, duracion: float, whatsapp: bool = False) -> bool:
+    """Vídeo de menos de SEGUNDOS_MOVIMIENTO. Sin duración conocida (0 o None) no se sabe y
+    sigue siendo un vídeo; lo de WhatsApp va siempre aparte, por corto que sea."""
+    return tipo == "video" and not whatsapp and 0 < (duracion or 0) < SEGUNDOS_MOVIMIENTO
 
 
 def categoria(ruta, ancho: int = 0, alto: int = 0) -> str:
