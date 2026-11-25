@@ -177,15 +177,19 @@ def sondear(ruta: Path):
 # manda el nombre: en un Takeout real, 105 de 400 vídeos traían en los metadatos la fecha
 # en que se volvieron a procesar (siempre posterior: de 20 min a 3 días), no la de grabación
 DESVIO_MAXIMO_NOMBRE = timedelta(minutes=10)
-# Nombres cuya hora no es local: los Pixel nombran PXL_AAAAMMDD_HHMMSSmmm en UTC
-_RE_NOMBRE_EN_UTC = re.compile(r"^PXL_", re.IGNORECASE)
+# Nombres cuya hora no es local: los Pixel nombran PXL_AAAAMMDD_HHMMSSmmm en UTC, también con
+# algo delante (.trashed-1770811116-PXL_…, lo que estaba en la papelera del móvil)
+_RE_NOMBRE_EN_UTC = re.compile(r"(?<![0-9A-Za-z])PXL_[0-9]{8}_[0-9]{6}", re.IGNORECASE)
 
 
 def fecha_nombre_camara(ruta: Path):
-    """Fecha *con hora* del nombre que pone la cámara (VID_20160812_203028), o None."""
-    if _RE_NOMBRE_EN_UTC.match(ruta.name) or not nombre_tiene_hora(ruta.stem):
+    """Fecha local *con hora* del nombre que pone la cámara (VID_20160812_203028), o None."""
+    if not nombre_tiene_hora(ruta.stem):
         return None
-    return fecha_desde_nombre(ruta.stem)
+    fecha = fecha_desde_nombre(ruta.stem)
+    if fecha and _RE_NOMBRE_EN_UTC.search(ruta.name):
+        fecha = fecha.replace(tzinfo=timezone.utc).astimezone().replace(tzinfo=None)
+    return fecha
 
 
 def fecha_video(ruta: Path, info: dict = None):
@@ -199,7 +203,7 @@ def fecha_video(ruta: Path, info: dict = None):
         if del_nombre and abs(info["fecha"] - del_nombre) > DESVIO_MAXIMO_NOMBRE:
             return del_nombre, "nombre"
         return info["fecha"], "metadatos"
-    fecha = fecha_desde_nombre(ruta.stem)
+    fecha = fecha_nombre_camara(ruta) or fecha_desde_nombre(ruta.stem)
     if fecha:
         return fecha, "nombre"
     return fecha_mtime(ruta), "archivo"

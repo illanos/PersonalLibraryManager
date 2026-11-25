@@ -243,8 +243,9 @@ Biblioteca/
   se alejan más de 10 minutos, manda el nombre y el vídeo exportado lleva esa fecha en
   `creation_time`. En un Takeout real, 105 de 400 vídeos traían en los metadatos la fecha en
   que se volvieron a procesar (siempre posterior, de 20 minutos a 3 días); los demás
-  coincidían con el nombre a menos de 10 minutos. Los `PXL_…` de Pixel no cuentan: su nombre
-  va en UTC.
+  coincidían con el nombre a menos de 10 minutos. El nombre de los `PXL_…` de Pixel va en
+  UTC: se pasa a hora local antes de comparar, también si lleva algo delante
+  (`.trashed-…-PXL_…`, de la papelera del móvil).
 - **Fechas aproximadas**: si la fecha sale de un nombre *sin hora* (WhatsApp), se usa la hora
   de modificación del archivo cuando es del mismo día (etiqueta *Hora aproximada*); si no, el
   nombre lo dice claramente, `20260121_WA0011`, en vez de inventar `20260121_000000_18`. Solo

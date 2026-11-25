@@ -63,8 +63,8 @@ línea de tiempo con su etiqueta. Al buscar archivos se saltan las carpetas ocul
 Prioridad: metadatos del archivo > nombre con hora > JSON de Google > nombre sin hora >
 fecha del archivo. Vídeos con fecha de cámara en el nombre (`VID_20160812_203028`): si los
 metadatos se alejan más de 10 minutos, manda el nombre (Google reprocesa vídeos y cambia su
-fecha). Los `PXL_…` de Pixel no cuentan (su nombre va en UTC). *Hora aproximada*: fecha
-del nombre sin hora + hora del archivo del mismo día.
+fecha). El nombre de los `PXL_…` de Pixel va en UTC y se pasa a hora local. *Hora
+aproximada*: fecha del nombre sin hora + hora del archivo del mismo día.
 
 ## 4. Catálogo (`.exportador/catalogo.sqlite`)
 
