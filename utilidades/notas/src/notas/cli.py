@@ -11,6 +11,7 @@ Uso (con el paquete instalado, `notas` equivale a `python -m notas`):
     python -m notas restaurar  <id> ...
     python -m notas categorias [--crear C] [--renombrar VIEJA NUEVA] [--borrar C]
     python -m notas copia      [destino.zip]
+    python -m notas importar   <carpeta del Takeout>        (notas de Google Keep)
 
 Las notas se guardan en ~/Notas, en la carpeta de NOTAS_CUADERNO o en la de --cuaderno.
 """
@@ -27,14 +28,27 @@ from . import __version__
 from .copia import crear_copia
 from .cuaderno import COLORES, SIN_CATEGORIA, TIPOS, Cuaderno, carpeta_cuaderno
 from .errores import ErrorNotas, NoEncontrada
+from .keep import CALIDAD, LADO
 from .servidor import PUERTO
 
 
 def _puerto(texto: str) -> int:
+    return _entre(1, 65535, texto)
+
+
+def _entre(minimo: int, maximo: int, texto: str) -> int:
     valor = int(texto)
-    if not 1 <= valor <= 65535:
-        raise argparse.ArgumentTypeError("debe estar entre 1 y 65535")
+    if not minimo <= valor <= maximo:
+        raise argparse.ArgumentTypeError(f"debe estar entre {minimo} y {maximo}")
     return valor
+
+
+def _lado(texto: str) -> int:
+    return 0 if texto == "0" else _entre(320, 20000, texto)
+
+
+def _calidad(texto: str) -> int:
+    return _entre(1, 95, texto)
 
 
 def construir_parser() -> argparse.ArgumentParser:
@@ -74,7 +88,7 @@ def construir_parser() -> argparse.ArgumentParser:
                         "exacta\" entre comillas y -palabra para excluir")
     p.add_argument("--categoria", metavar="NOMBRE", help="Solo las de esta categoría")
     p.add_argument("--sin-categoria", action="store_true", help="Solo las que no tienen categoría")
-    p.add_argument("--tipo", choices=TIPOS, help="texto = sin adjuntos | imagen | voz")
+    p.add_argument("--tipo", choices=TIPOS, help="texto = sin adjuntos | lista = con casillas | imagen | voz")
     g = p.add_mutually_exclusive_group()
     g.add_argument("--archivadas", action="store_true", help="Las archivadas")
     g.add_argument("--papelera", action="store_true", help="Las de la papelera")
@@ -126,6 +140,16 @@ def construir_parser() -> argparse.ArgumentParser:
                        help="Copia de seguridad de todo el cuaderno en un ZIP")
     p.add_argument("destino", type=Path, nargs="?", default=None,
                    help="Archivo o carpeta (por defecto, en copias/ dentro del cuaderno)")
+
+    p = sub.add_parser("importar", parents=[comun],
+                       help="Importar las notas de Google Keep de un Takeout (que no se toca)")
+    p.add_argument("carpeta", type=Path, help="Carpeta del Takeout, ya descomprimido")
+    p.add_argument("--simular", action="store_true", help="Solo decir qué se importaría")
+    p.add_argument("--lado", type=_lado, default=LADO, metavar="PX",
+                   help=f"Lado mayor de las imágenes, en píxeles (por defecto {LADO}; "
+                        "0 = tal cual están)")
+    p.add_argument("--calidad", type=_calidad, default=CALIDAD, metavar="1-95",
+                   help=f"Calidad JPEG de las imágenes (por defecto {CALIDAD})")
     return parser
 
 
@@ -172,6 +196,22 @@ def _imprimir_nota(nota: dict, carpeta: Path):
         for a in nota["adjuntos"]:
             print(f"  [{a['tipo']}]{_duracion(a['duracion'])} {a['nombre']}\n"
                   f"      {carpeta / a['archivo']}")
+    if nota["detalles"]:
+        print()
+        _imprimir_detalles(nota["detalles"])
+
+
+def _imprimir_detalles(detalles: dict):
+    for e in detalles.get("enlaces", ()):
+        print(f"  [enlace] {e['titulo']}\n      {e['url']}")
+    if detalles.get("compartida"):
+        print("  compartida con: " + ", ".join(detalles["compartida"]))
+    if detalles.get("recordatorio"):
+        print("  tenía un recordatorio")
+    if detalles.get("faltan"):
+        print("  faltan archivos: " + ", ".join(detalles["faltan"]))
+    if detalles.get("fuente"):
+        print(f"  importada de {detalles['fuente']}")
 
 
 def _json(datos):
@@ -286,11 +326,42 @@ def _categorias(cuaderno, args):
         print("No hay categorías")
 
 
+def _importar(carpeta: Path, args):
+    from .keep import importar, leer
+
+    def progreso(i, total):
+        if not args.simular and (i % 100 == 0 or i == total):
+            print(f"  {i} de {total}", flush=True)
+
+    r = importar(carpeta, leer(args.carpeta), args.simular, args.lado, args.calidad, progreso)
+    t = r.tipos
+    mb = lambda b: f"{b / 1e6:.0f} MB"
+    print(("Se importarían " if args.simular else "Importadas ")
+          + f"{r.importadas} nota{'' if r.importadas == 1 else 's'} en {carpeta}")
+    if r.importadas:
+        print(f"  {t['activas']} activas · {t['archivadas']} archivadas · {t['papelera']} en la papelera "
+              f"· {t['fijadas']} fijadas")
+        print(f"  {t['texto']} sin adjuntos · {t['lista']} listas · {t['imagen']} con imágenes · "
+              f"{t['voz']} con notas de voz")
+        print(f"  {t['etiquetadas']} con categoría · {t['color']} con color · {t['enlaces']} con enlaces · "
+              f"{t['compartidas']} compartidas · {t['recordatorio']} con recordatorio")
+        print(f"  {t['imagenes']} imágenes y {t['audios']} audios: {mb(r.bytes_origen)}"
+              + ("" if args.simular else f" -> {mb(r.bytes_final)}"))
+    if r.repetidas:
+        print(f"  {r.repetidas} ya estaban importadas")
+    if r.vacias:
+        print(f"  {r.vacias} vacías, que no se importan")
+    for texto in r.avisos:
+        print(f"  AVISO: {texto}")
+
+
 def main(argv=None):
     args = construir_parser().parse_args(argv)
     carpeta = carpeta_cuaderno(args.cuaderno)
     try:
-        # Solo al abrir la página o crear una nota o categoría se estrena un cuaderno
+        if args.comando == "importar":
+            return _importar(carpeta, args)
+        # Solo al importar, abrir la página o crear una nota o categoría se estrena un cuaderno
         estrena = args.comando in ("abrir", "nueva") or getattr(args, "crear", None)
         cuaderno = Cuaderno(carpeta, crear=bool(estrena))
         if args.comando == "abrir":

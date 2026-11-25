@@ -133,6 +133,17 @@ body.en-lista .seccion > h2 { max-width: 720px; margin-left: auto; margin-right:
 body.eligiendo .tarjeta .pie .elegir { opacity: 1; }
 @media (hover: none) { .tarjeta .pie .ico, .tarjeta .fijar { opacity: .8; } }
 
+.hecha { text-decoration: line-through; opacity: .6; }
+.enlace { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; padding: 6px 10px; border-radius: 8px; text-decoration: none;
+          background: color-mix(in srgb, var(--texto) 6%, transparent); }
+.enlace, .tarjeta a.enlace { color: inherit; }
+.enlace:hover { background: var(--acento-suave); }
+.enlace svg { flex: none; width: 16px; height: 16px; color: var(--tenue); }
+.enlace > span { min-width: 0; }
+.enlace b, .enlace small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.enlace b { font-weight: 500; font-size: .85rem; }
+.enlace small { color: var(--tenue); font-size: .75rem; }
+
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chips:empty { display: none; }
 .tarjeta .chips { margin: 2px 0 8px; }
@@ -195,6 +206,9 @@ dialog::backdrop { background: rgb(10 8 20 / .55); }
 .e-cab { display: flex; align-items: flex-start; gap: 8px; padding: 14px 12px 0 18px; }
 #e-titulo { flex: 1; min-width: 0; border: 0; background: none; outline: 0; font-size: 1.2rem; font-weight: 600; padding: 4px 0; }
 #e-texto { display: block; width: 100%; border: 0; background: none; outline: 0; resize: none; padding: 8px 18px 14px; font-size: .98rem; line-height: 1.5; overflow: hidden; min-height: 84px; }
+#e-detalles { padding: 0 18px 4px; }
+#e-detalles p { margin: 4px 0 8px; color: var(--tenue); font-size: .8rem; overflow-wrap: anywhere; }
+#e-detalles p:empty { display: none; }
 #e-categorias { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 18px; }
 #e-categoria { border: 1px dashed var(--borde); background: none; border-radius: 999px; padding: 3px 10px; font-size: .82rem; width: 130px; }
 #e-categoria:focus { border-style: solid; border-color: var(--acento); outline: 0; }

@@ -27,9 +27,9 @@ from .errores import AdjuntoNoValido, Conflicto, ErrorNotas, NoEncontrada
 
 VARIABLE_CUADERNO = "NOTAS_CUADERNO"
 ARCHIVO_BD = "notas.sqlite"
-VERSION_BD = 1
 COLORES = ("", "coral", "melocoton", "limon", "menta", "cielo", "lavanda", "rosa", "arena")
-TIPOS = ("texto", adj.IMAGEN, adj.VOZ)
+TIPOS = ("texto", "lista", adj.IMAGEN, adj.VOZ)
+PENDIENTE, HECHA = "☐", "☑"  # una línea que empieza así es una casilla; con alguna, es una lista
 MAX_TITULO, MAX_TEXTO, MAX_CATEGORIA, MAX_BUSQUEDA = 500, 500_000, 60, 500
 SIN_CATEGORIA = 0            # en `listar`, las notas que no tienen ninguna
 VACIAR = "VACIAR"            # lo que hay que escribir para vaciar la papelera
@@ -40,6 +40,8 @@ VISTAS = {
     "todas": "n.papelera IS NULL",
     "papelera": "n.papelera IS NOT NULL",
 }
+ES_LISTA = (f"(instr(char(10) || n.texto, char(10) || '{PENDIENTE}') > 0 "
+            f"OR instr(char(10) || n.texto, char(10) || '{HECHA}') > 0)")
 ORDENES = {
     "modificada": "n.modificada DESC, n.id DESC",
     "creada": "n.creada DESC, n.id DESC",
@@ -47,6 +49,8 @@ ORDENES = {
     "titulo": "n.titulo = '', n.busqueda, n.id DESC",
 }
 
+# Cada una lleva un cuaderno de una versión a la siguiente. Las publicadas no se tocan (ya hay
+# cuadernos con cada una): para cambiar algo se añade otra al final de MIGRACIONES.
 ESQUEMA = """
 CREATE TABLE notas (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -88,6 +92,15 @@ CREATE TABLE adjuntos (
 );
 CREATE INDEX idx_adjuntos_nota ON adjuntos (nota);
 """
+# `origen`: de dónde se importó la nota, para no repetirla. `detalles`: JSON con lo que traía y
+# no es texto (enlaces, con quién se compartió, recordatorio…), o nada
+IMPORTADAS = """
+ALTER TABLE notas ADD COLUMN origen TEXT;
+ALTER TABLE notas ADD COLUMN detalles TEXT NOT NULL DEFAULT '';
+CREATE UNIQUE INDEX idx_notas_origen ON notas (origen) WHERE origen IS NOT NULL;
+"""
+MIGRACIONES = (ESQUEMA, IMPORTADAS)
+VERSION_BD = len(MIGRACIONES)
 
 # Un término de búsqueda: palabra o "frase exacta", con '-' delante para excluir
 _RE_TERMINO = re.compile(r'(-?)(?:"([^"]+)"|([^\s"]+))')
@@ -113,7 +126,7 @@ def terminos(buscar: str) -> list:
 
 
 def _ahora() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    return _instante(datetime.now(timezone.utc))
 
 
 def _texto(valor, campo: str, maximo: int) -> str:
@@ -124,6 +137,20 @@ def _texto(valor, campo: str, maximo: int) -> str:
     # Medio emoji suelto (se puede colar al cortar un texto) no se puede guardar en UTF-8
     valor = valor.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
     return valor.replace("\r\n", "\n").replace("\x00", "")
+
+
+def _instante(momento: datetime) -> str:
+    return momento.astimezone(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def _para_buscar(titulo: str, texto: str, detalles: dict) -> str:
+    """Lo que mira el buscador. El título va primero: también sirve para ordenar."""
+    enlaces = [f"{e['titulo']} {e['descripcion']} {e['url']}" for e in detalles.get("enlaces", ())]
+    return normalizar("\n".join([titulo, texto, *enlaces, *detalles.get("compartida", ())]))
+
+
+def _detalles(fila) -> dict:
+    return json.loads(fila["detalles"] or "{}")
 
 
 def _duracion(valor):
@@ -206,8 +233,8 @@ class Cuaderno:
             if version > VERSION_BD:
                 raise ErrorNotas("Este cuaderno es de una versión más nueva de Notas: "
                                  "actualiza el programa")
-            if version == 0:
-                for sentencia in ESQUEMA.split(";\n"):
+            if version < VERSION_BD:
+                for sentencia in "".join(MIGRACIONES[version:]).split(";\n"):
                     if sentencia.strip():
                         db.execute(sentencia)
                 db.execute(f"PRAGMA user_version = {VERSION_BD}")
@@ -233,6 +260,8 @@ class Cuaderno:
         if tipo == "texto":
             condiciones.append("NOT EXISTS (SELECT 1 FROM adjuntos a "
                                "WHERE a.nota = n.id AND a.quitado IS NULL)")
+        elif tipo == "lista":
+            condiciones.append(ES_LISTA)
         elif tipo:
             condiciones.append("EXISTS (SELECT 1 FROM adjuntos a WHERE a.nota = n.id "
                                "AND a.quitado IS NULL AND a.tipo = ?)")
@@ -273,7 +302,8 @@ class Cuaderno:
             "id": f["id"], "titulo": f["titulo"], "texto": f["texto"], "color": f["color"],
             "fijada": bool(f["fijada"]), "archivada": bool(f["archivada"]),
             "papelera": f["papelera"], "creada": f["creada"], "modificada": f["modificada"],
-            "version": f["version"], "categorias": [], "adjuntos": []} for f in filas}
+            "version": f["version"], "detalles": _detalles(f), "categorias": [], "adjuntos": []}
+            for f in filas}
         ids = json.dumps(list(notas))
         for f in db.execute("SELECT nc.nota, c.id, c.nombre FROM notas_categorias nc "
                             "JOIN categorias c ON c.id = nc.categoria "
@@ -310,6 +340,7 @@ class Cuaderno:
             totales["texto"] = uno(
                 f"SELECT COUNT(*) FROM notas n WHERE {activas} AND NOT EXISTS (SELECT 1 "
                 "FROM adjuntos a WHERE a.nota = n.id AND a.quitado IS NULL)")
+            totales["lista"] = uno(f"SELECT COUNT(*) FROM notas n WHERE {activas} AND {ES_LISTA}")
             totales["sin_categoria"] = uno(
                 f"SELECT COUNT(*) FROM notas n WHERE {activas} AND NOT EXISTS "
                 "(SELECT 1 FROM notas_categorias nc WHERE nc.nota = n.id)")
@@ -326,7 +357,7 @@ class Cuaderno:
             id_nota = db.execute(
                 "INSERT INTO notas (titulo, texto, busqueda, color, fijada, creada, modificada) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (titulo, texto, normalizar(f"{titulo}\n{texto}"), _color(color), int(bool(fijada)),
+                (titulo, texto, _para_buscar(titulo, texto, {}), _color(color), int(bool(fijada)),
                  ahora, ahora)).lastrowid
             self._poner_categorias(db, id_nota, categorias)
             return self._nota(db, id_nota)
@@ -352,7 +383,8 @@ class Cuaderno:
                     raise Conflicto(self._nota(db, id_nota))
                 db.execute("UPDATE notas SET titulo = ?, texto = ?, busqueda = ?, modificada = ?, "
                            "version = version + 1 WHERE id = ?",
-                           (titulo, texto, normalizar(f"{titulo}\n{texto}"), _ahora(), id_nota))
+                           (titulo, texto, _para_buscar(titulo, texto, _detalles(fila)), _ahora(),
+                            id_nota))
             if "color" in cambios:
                 db.execute("UPDATE notas SET color = ? WHERE id = ?",
                            (_color(cambios["color"]), id_nota))
@@ -402,6 +434,52 @@ class Cuaderno:
                     f"DELETE FROM notas_categorias WHERE nota IN ({marcas}) AND categoria IN "
                     "(SELECT id FROM categorias WHERE clave = ?)", [*ids, clave]).rowcount
         raise ErrorNotas(f"Acción desconocida: {accion}")
+
+    # --- importar ---
+
+    def importadas(self) -> set:
+        """El `origen` de las notas que vienen de otro programa (también las de la papelera)."""
+        with self._leer() as db:
+            return {f[0] for f in db.execute("SELECT origen FROM notas WHERE origen IS NOT NULL")}
+
+    def importar(self, origen: str, titulo: str = "", texto: str = "", color: str = "",
+                 fijada: bool = False, archivada: bool = False, papelera: datetime = None,
+                 creada: datetime = None, modificada: datetime = None, categorias=(),
+                 detalles: dict = None, adjuntos=()) -> dict:
+        """Crea una nota que viene de otro programa, con sus fechas, adjuntos y detalles.
+
+        `origen` la identifica («keep:1365…») para no importarla dos veces; `adjuntos`, una
+        lista de diccionarios con `flujo`, `nombre`, `creado` y, si se sabe, `duracion`.
+        O se guarda entera o no se guarda nada.
+        """
+        titulo = _texto(titulo, "Título", MAX_TITULO)
+        texto = _texto(texto, "Texto", MAX_TEXTO)
+        detalles = detalles or {}
+        creada = creada or datetime.now(timezone.utc)
+        guardados = []
+        try:
+            for a in adjuntos:
+                guardados.append((a, adj.guardar(self.carpeta, a["flujo"], a["nombre"],
+                                                 ahora=a["creado"].astimezone())))
+            with self._escribir() as db:
+                if db.execute("SELECT 1 FROM notas WHERE origen = ?", (origen,)).fetchone():
+                    raise ErrorNotas("Esa nota ya está importada")
+                id_nota = db.execute(
+                    "INSERT INTO notas (titulo, texto, busqueda, color, fijada, archivada, papelera, "
+                    "creada, modificada, origen, detalles) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (titulo, texto, _para_buscar(titulo, texto, detalles), _color(color),
+                     int(bool(fijada and not archivada)), int(bool(archivada)),
+                     _instante(papelera) if papelera else None, _instante(creada),
+                     _instante(modificada or creada), origen,
+                     json.dumps(detalles, ensure_ascii=False) if detalles else "")).lastrowid
+                self._poner_categorias(db, id_nota, categorias)
+                for a, datos in guardados:
+                    self._anotar_adjunto(db, id_nota, datos, a.get("duracion"),
+                                         _instante(a["creado"]))
+                return self._nota(db, id_nota)
+        except BaseException:
+            adj.borrar_archivos(self.carpeta, [datos["archivo"] for _, datos in guardados])
+            raise
 
     # --- borrar de verdad ---
 
@@ -507,18 +585,22 @@ class Cuaderno:
             with self._escribir() as db:
                 self._fila(db, id_nota)
                 ahora = _ahora()
-                id_adjunto = db.execute(
-                    "INSERT INTO adjuntos (nota, tipo, archivo, nombre, clave, mime, bytes, "
-                    "duracion, ancho, alto, creado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (id_nota, datos["tipo"], datos["archivo"], datos["nombre"],
-                     normalizar(datos["nombre"]), datos["mime"], datos["bytes"],
-                     _duracion(duracion) if datos["tipo"] == adj.VOZ else None, datos["ancho"],
-                     datos["alto"], ahora)).lastrowid
+                id_adjunto = self._anotar_adjunto(db, id_nota, datos, duracion, ahora)
                 db.execute("UPDATE notas SET modificada = ? WHERE id = ?", (ahora, id_nota))
                 return self._adjunto(self._fila_adjunto(db, id_adjunto))
         except BaseException:
             adj.borrar_archivos(self.carpeta, [datos["archivo"]])
             raise
+
+    @staticmethod
+    def _anotar_adjunto(db, id_nota: int, datos: dict, duracion, creado: str) -> int:
+        return db.execute(
+            "INSERT INTO adjuntos (nota, tipo, archivo, nombre, clave, mime, bytes, duracion, "
+            "ancho, alto, creado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (id_nota, datos["tipo"], datos["archivo"], datos["nombre"],
+             normalizar(datos["nombre"]), datos["mime"], datos["bytes"],
+             _duracion(duracion) if datos["tipo"] == adj.VOZ else None, datos["ancho"],
+             datos["alto"], creado)).lastrowid
 
     def adjuntar_archivo(self, id_nota: int, ruta) -> dict:
         """Como `adjuntar`, desde un archivo del disco (que solo se lee)."""

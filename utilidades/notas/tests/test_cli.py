@@ -122,6 +122,29 @@ class Cambiar(CasoCli):
         self.assertIn("Ya existe", self.error("copia", str(destino)))
 
 
+class Importar(CasoCli):
+    def test_importar(self):
+        self.carpeta = self.dir / "otro"
+        (self.dir / "Keep").mkdir()
+        (self.dir / "Keep" / "a.json").write_text(json.dumps({
+            "color": "RED", "isTrashed": False, "isPinned": False, "isArchived": True, "title": "De Keep",
+            "createdTimestampUsec": 1_500_000_000_000_000, "listContent": [{"text": "Pan", "isChecked": True}],
+            "annotations": [{"url": "https://e.org", "title": "Página", "description": ""}],
+            "sharees": [{"email": "ana@e.org"}], "tasks": [{"id": "x"}]}), encoding="utf-8")
+        salida = self.notas("importar", str(self.dir), "--simular")
+        self.assertIn("Se importarían 1 nota en", salida)
+        self.assertFalse(self.carpeta.exists())
+        salida = self.notas("importar", str(self.dir), "--lado", "0", "--calidad", "60")
+        self.assertIn("Importadas 1 nota en", salida)
+        self.assertIn("1 archivadas", salida)
+        self.assertIn("1 listas", salida)
+        self.assertIn("1 ya estaban", self.notas("importar", str(self.dir)))
+        ver = self.notas("ver", "1")
+        for trozo in ("De Keep", "☑ Pan", "https://e.org", "ana@e.org", "recordatorio", "importada de Google Keep"):
+            self.assertIn(trozo, ver)
+        self.assertIn("No hay notas de Google Keep", self.error("importar", str(self.carpeta)))
+
+
 class Abrir(CasoCli):
     def test_abrir(self):
         with unittest.mock.patch("notas.servidor.servir") as servir:
@@ -136,7 +159,8 @@ class Abrir(CasoCli):
         self.assertIn("no se puede usar el cuaderno", self.error("listar"))
 
     def test_opciones_fuera_de_rango(self):
-        for args in (["abrir", "--puerto", "0"], ["nueva", "x", "--color", "fucsia"], ["listar", "--tipo", "x"]):
+        for args in (["abrir", "--puerto", "0"], ["nueva", "x", "--color", "fucsia"], ["listar", "--tipo", "x"],
+                     ["importar", "x", "--lado", "10"], ["importar", "x", "--calidad", "100"]):
             with self.subTest(args=args), self.assertRaises(SystemExit), unittest.mock.patch("sys.stderr"):
                 construir_parser().parse_args(args)
 
