@@ -97,6 +97,8 @@ class OpcionesFusion:
     metadatos: bool = True          # la copia que se queda gana los metadatos de las otras
     hilos: int = 0                  # 0 = según los núcleos
     galeria: bool = True            # actualizar la galería de la biblioteca al terminar
+    sustituir: bool = True          # una copia mejor de la colección sustituye a la de la biblioteca
+    omitir_parecidas: bool = False  # no añadir lo parecido (no igual) a una de la biblioteca
 
 
 @dataclass(eq=False)
@@ -128,12 +130,14 @@ class Elemento:
     categoria: str = ""
     base: str = ""                  # nombre en la biblioteca, sin extensión
     convertir: bool = False         # al añadirla: reducir o pasar a un formato de la galería
-    accion: str = ""                # anadir | sustituir | ya_esta | repetida | quitada | error
+    accion: str = ""                # anadir | sustituir | ya_esta | repetida | quitada | parecida | error
     pareja: "Elemento" = None       # la copia igual con la que se ha comparado
     como: str = ""                  # por qué son iguales: "N bits", "mismo original"...
     sustituye: "Elemento" = None    # la de la biblioteca que pasa a la papelera
     motivo: str = ""
     parecida: tuple = None          # (elemento, bits): parecida, pero no igual
+    parecida_bib: tuple = None      # lo mismo, la más parecida de la biblioteca
+    mejor_sin_sustituir: bool = False   # era mejor que la de la biblioteca, pero no la sustituye
     destino_rel: str = ""
     clave: str = None               # hash con el que se anota en el catálogo
     tmp: Path = None                # copia preparada (.part) antes de colocarla
@@ -430,6 +434,9 @@ def buscar_pareja(c: Elemento, indice: Indice, umbral: int = UMBRAL_COPIA) -> tu
             if bits > umbral or _otra_toma(c, e):
                 if bits <= UMBRAL and (c.parecida is None or bits < c.parecida[1]):
                     c.parecida = (e, bits)
+                if (bits <= UMBRAL and e.lado == "b"
+                        and (c.parecida_bib is None or bits < c.parecida_bib[1])):
+                    c.parecida_bib = (e, bits)
                 continue
         if mejor is None or bits < mejor_bits:
             mejor, mejor_bits = e, bits
@@ -471,11 +478,20 @@ def planificar(coleccion: list, biblioteca: list, papelera: list = (), descartad
                 c.accion, c.pareja, c.como = "quitada", quitada, como
                 c.motivo = f"igual que {quitada.rel}, quitada antes con «Limpiar repetidas»"
                 continue
+            if opciones.omitir_parecidas and c.parecida_bib is not None:
+                # Otra toma, una editada o una copia que no llega a igual: ya hay algo así
+                c.accion, (c.pareja, bits) = "parecida", c.parecida_bib
+                c.como = f"{bits} bit{'s' if bits != 1 else ''} de diferencia"
+                continue
             c.accion = "anadir"
             indice.anadir(c)
             continue
         c.pareja, c.como = pareja, como
         signo, motivo = comparar(c, pareja, opciones.max_lado, opciones.max_lado_video)
+        if signo > 0 and pareja.lado == "b" and not opciones.sustituir:
+            # Mejor, pero lo que ya está en la biblioteca no se cambia (sí sus metadatos)
+            c.accion, c.motivo, c.mejor_sin_sustituir = "ya_esta", motivo, True
+            continue
         if signo <= 0:
             c.accion = "ya_esta" if pareja.lado == "b" else "repetida"
             c.motivo = motivo
@@ -963,7 +979,8 @@ def _quitar_de_galeria(biblioteca: Path, movidas: list):
 ETIQUETAS = {
     "anadir": ("ANADIDA", "AÑADIR"), "sustituir": ("SUSTITUYE", "SUSTITUIR"),
     "ya_esta": ("YA_ESTA", "YA ESTÁ"), "repetida": ("REPETIDA", "REPETIDA"),
-    "quitada": ("QUITADA_ANTES", "QUITADA"), "error": ("ERROR", "ERROR"),
+    "quitada": ("QUITADA_ANTES", "QUITADA"), "parecida": ("PARECIDA", "PARECIDA"),
+    "error": ("ERROR", "ERROR"),
 }
 # Y "METADATOS": una de la biblioteca que se queda gana los metadatos de otra copia
 
@@ -1001,6 +1018,12 @@ def _detalle_accion(c: Elemento) -> str:
     if c.accion == "sustituir":
         return (f"mejor que {c.sustituye.rel} ({c.motivo}; {c.como}), "
                 "que va a la papelera")
+    if c.accion == "parecida":
+        return (f"parecida a {c.pareja.rel} ({c.como}), pero no igual: no se añade "
+                "(--omitir-parecidas)")
+    if c.mejor_sin_sustituir:
+        return (f"igual que {c.pareja.rel} ({c.como}); esta es mejor ({c.motivo}), pero no "
+                "se sustituye lo que ya está (--sin-sustituir)")
     if c.accion in ("ya_esta", "repetida"):
         donde = "la de la biblioteca" if c.accion == "ya_esta" else "la otra de la colección"
         if c.motivo == "copias equivalentes":
@@ -1040,7 +1063,8 @@ def nuevas_estadisticas() -> dict:
     return {"fotos": 0, "videos": 0, "anadidas": 0, "sustituidas": 0, "ya_estaban": 0,
             "repetidas": 0, "quitadas": 0, "ya_fusionadas": 0, "ya_comparadas": 0,
             "parecidas": 0, "convertidas": 0, "metadatos": 0, "metadatos_sin_poder": 0,
-            "errores": 0, "omitidos": 0, "bytes_anadidos": 0, "bytes_papelera": 0}
+            "errores": 0, "omitidos": 0, "bytes_anadidos": 0, "bytes_papelera": 0,
+            "no_sustituidas": 0, "parecidas_omitidas": 0}
 
 
 def fusionar(coleccion: Path, biblioteca: Path, simular: bool = False,
@@ -1075,7 +1099,10 @@ def fusionar(coleccion: Path, biblioteca: Path, simular: bool = False,
           f"{coleccion}\n  en {biblioteca}\n  se compara por días (±{opciones.margen_dias}); "
           f"fotos iguales a ≤ {opciones.umbral} bits; límite {opciones.max_lado or 'ninguno'} px "
           f"(fotos), {opciones.max_lado_video or 'ninguno'} px (vídeos); metadatos: "
-          f"{'se fusionan' if opciones.metadatos else 'no se tocan'} — {hilos} hilo(s)\n")
+          f"{'se fusionan' if opciones.metadatos else 'no se tocan'}"
+          f"{'; lo que ya está no se sustituye' if not opciones.sustituir else ''}"
+          f"{'; las parecidas no se añaden' if opciones.omitir_parecidas else ''}"
+          f" — {hilos} hilo(s)\n")
 
     with Catalogo(biblioteca, simular) as catalogo, Catalogo(coleccion, simular=True) as cat_col, \
             Informe(biblioteca, "fusion", simular) as informe, ThreadPoolExecutor(hilos) as pool:
@@ -1181,8 +1208,9 @@ def fusionar(coleccion: Path, biblioteca: Path, simular: bool = False,
                 if c.accion == "error":
                     stats["errores"] += 1
                     continue
-                stats[{"ya_esta": "ya_estaban", "repetida": "repetidas",
-                       "quitada": "quitadas"}[c.accion]] += 1
+                stats[{"ya_esta": "ya_estaban", "repetida": "repetidas", "quitada": "quitadas",
+                       "parecida": "parecidas_omitidas"}[c.accion]] += 1
+                stats["no_sustituidas"] += c.mejor_sin_sustituir
                 catalogo.descartar(c.ruta, c.st.st_size, c.st.st_mtime_ns, c.tipo,
                                    MOTIVO_DESCARTE, detalle=detalle, referencia=_referencia(c))
 
@@ -1308,6 +1336,8 @@ def _imprimir_resumen(stats: dict, simular: bool, informe):
         ("  de ellas convertidas/reducidas", stats["convertidas"]),
         ("  parecidas a otra, no iguales", stats["parecidas"]),
         ("Ya estaban (igual o mejor)", stats["ya_estaban"]),
+        ("  mejores, pero no se sustituyen", stats["no_sustituidas"]),
+        ("Parecidas (no se añaden)", stats["parecidas_omitidas"]),
         ("Con metadatos de otra copia" + (" (a añadir)" if simular else ""), stats["metadatos"]),
         ("  sin poder (formato sin recomprimir)", stats["metadatos_sin_poder"]),
         ("Repetidas en la colección", stats["repetidas"]),

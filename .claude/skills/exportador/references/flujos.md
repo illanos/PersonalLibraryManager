@@ -123,7 +123,8 @@ python -m exportador fusionar "D:\Google" --destino "D:\Biblioteca"
   final): ábrelo o resúmelo por la columna `accion` — `ANADIDA` (nueva), `SUSTITUYE` (la de
   la colección es mejor; la de la biblioteca irá a la papelera), `YA_ESTA`, `REPETIDA`
   (repetida dentro de la colección), `QUITADA_ANTES` (se quitó antes con Limpiar
-  repetidas), `METADATOS` (la de la biblioteca gana metadatos de la otra), `ERROR`.
+  repetidas), `PARECIDA` (con `--omitir-parecidas`), `METADATOS` (la de la biblioteca gana
+  metadatos de la otra), `ERROR`.
 - Compara por días (±`--margen-dias`, 1). Dos fotos son la misma si su dHash difiere
   ≤ `--umbral` bits (5), con la misma fecha EXIF si ambas la tienen, o si vienen del mismo
   original (mismo nombre y hora, o mismo MD5). Ráfagas: no son copias, se añaden (salen como
@@ -137,6 +138,12 @@ python -m exportador fusionar "D:\Google" --destino "D:\Biblioteca"
 - Comprueba el espacio antes de copiar (deja 2 GB libres); si no cabe, no empieza.
 - Subir `--umbral` (máx. 12) es más agresivo: más pares iguales, más riesgo de tomar dos
   fotos distintas por la misma. Solo si la simulación deja copias obvias sin emparejar.
+- **Una carpeta llena de copias de lo que ya hay** (un disco viejo, una copia del móvil):
+  `--sin-sustituir` no cambia nada de la biblioteca aunque llegue una copia mejor (solo
+  gana sus metadatos) y `--omitir-parecidas` no añade lo que se parece a una foto de la
+  biblioteca sin ser igual (ráfagas, editadas; acción `PARECIDA` en el informe). Así solo
+  entra lo que de verdad no está. Úsalas cuando el usuario diga que no quiere repetidas
+  ni parecidas, o que no se toque lo que ya tiene.
 - Una segunda fusión solo mira lo nuevo. Al terminar actualiza la galería (salvo
   `--sin-galeria`) y el informe queda en `.exportador/informes/fusion_*.csv`.
 

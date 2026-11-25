@@ -176,6 +176,45 @@ class Plan(unittest.TestCase):
         self.assertEqual((mejor.accion, mejor.sustituye), ("sustituir", en_bib))
         self.assertEqual((peor.accion, peor.pareja), ("repetida", mejor))
 
+    def test_sin_sustituir_se_queda_la_de_la_biblioteca(self):
+        peor = foto("peor.jpg", "c", ancho=800, alto=600, dhash="0f" * 16)
+        mejor = foto("mejor.jpg", "c", ancho=1600, alto=1200, dhash="0f" * 16)
+        en_bib = foto("bib.jpg", ancho=1000, alto=750, dhash="0f" * 16)
+        planificar([peor, mejor], [en_bib], opciones=OpcionesFusion(sustituir=False))
+        self.assertEqual((mejor.accion, mejor.pareja, mejor.sustituye, mejor.mejor_sin_sustituir),
+                         ("ya_esta", en_bib, None, True))
+        self.assertEqual((peor.accion, peor.pareja, peor.mejor_sin_sustituir),
+                         ("ya_esta", en_bib, False))
+        self.assertIn("no se sustituye", fusionar._detalle_accion(mejor))
+        # Lo que solo está en la colección sigue entrando, la mejor de sus copias
+        nueva = foto("nueva.jpg", "c", ancho=1600, alto=1200, dhash="3c" * 16)
+        copia_nueva = foto("copia.jpg", "c", ancho=800, alto=600, dhash="3c" * 16)
+        planificar([copia_nueva, nueva], [en_bib], opciones=OpcionesFusion(sustituir=False))
+        self.assertEqual((nueva.accion, copia_nueva.accion), ("anadir", "repetida"))
+
+    def test_omitir_parecidas_a_una_de_la_biblioteca(self):
+        bib = [foto("bib.jpg", dhash="f0" * 16, fuente="exif")]
+        rafaga = foto("rafaga.jpg", "c", dhash="f0" * 15 + "f1", fuente="exif",
+                      fecha=datetime(2024, 5, 12, 10, 0, 1))         # otra toma: 1 bit
+        editada = foto("editada.jpg", "c", dhash="f0" * 15 + "0f")     # 8 bits, sin EXIF
+        distinta = foto("distinta.jpg", "c", dhash="3c" * 16)
+        # Dos tomas que solo están en la colección: entran las dos
+        sola1 = foto("sola1.jpg", "c", dhash="cc" * 16, fuente="exif",
+                     fecha=datetime(2024, 5, 12, 11, 0, 0))
+        sola2 = foto("sola2.jpg", "c", dhash="cc" * 15 + "cd", fuente="exif",
+                     fecha=datetime(2024, 5, 12, 11, 0, 1))
+        planificar([rafaga, editada, distinta, sola1, sola2], bib,
+                   opciones=OpcionesFusion(omitir_parecidas=True))
+        self.assertEqual((rafaga.accion, rafaga.pareja.rel, rafaga.como),
+                         ("parecida", "bib.jpg", "1 bit de diferencia"))
+        self.assertEqual((editada.accion, editada.como), ("parecida", "8 bits de diferencia"))
+        self.assertIn("no se añade", fusionar._detalle_accion(editada))
+        self.assertEqual([c.accion for c in (distinta, sola1, sola2)], ["anadir"] * 3)
+        # Sin la opción, la ráfaga entra (y se cuenta como parecida)
+        rafaga.accion = ""
+        planificar([rafaga], bib)
+        self.assertEqual(rafaga.accion, "anadir")
+
     def test_igual_a_una_quitada_a_mano(self):
         quitada = foto("x.jpg", "p", dhash="3c" * 16)
         c = foto("c.jpg", "c", dhash="3c" * 16)
@@ -385,6 +424,26 @@ class Fotos(CasoConCarpeta):
         stats = self.fusionar(simular=True)
         self.assertNotIn("aviso_espacio", stats)
         self.assertGreater(stats["espacio_necesario"], 0)
+
+    def test_sin_sustituir_ni_parecidas_solo_entra_lo_que_no_esta(self):
+        antes_b = (self.bib / self.src_b).stat().st_size
+        stats = self.fusionar(sustituir=False, omitir_parecidas=True)
+        self.assertEqual((stats["anadidas"], stats["sustituidas"], stats["ya_estaban"],
+                          stats["no_sustituidas"], stats["parecidas_omitidas"],
+                          stats["repetidas"], stats["parecidas"]), (4, 0, 2, 1, 1, 1, 0))
+        archivos = set(self.archivos(self.bib))
+        self.assertNotIn("2024/05-Mayo/20240512_100005.jpg", archivos)   # la ráfaga no
+        self.assertFalse([a for a in archivos if a.startswith(".exportador/papelera/")])
+        with Image.open(self.bib / self.src_b) as im:   # se queda la de la biblioteca
+            self.assertEqual(im.size, (800, 600))
+        self.assertLess(abs((self.bib / self.src_b).stat().st_size - antes_b), 20_000)
+        salida = self.consola.getvalue()
+        self.assertIn("PARECIDA", salida)
+        self.assertIn("no se sustituye", salida)
+        # Lo omitido queda anotado: la siguiente fusión no lo vuelve a comparar
+        stats = self.fusionar(sustituir=False, omitir_parecidas=True)
+        self.assertEqual((stats["anadidas"], stats["ya_fusionadas"], stats["ya_comparadas"]),
+                         (0, 4, 4))
 
     def test_umbral_cero_solo_copias_casi_exactas(self):
         stats = self.fusionar(simular=True, umbral=0)
