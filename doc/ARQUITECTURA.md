@@ -466,6 +466,10 @@ o cualquier carpeta— sin repetir lo que ya tiene. Lógica en `fusionar.py`.
   las dos tienen fecha EXIF, exactamente la misma: las tomas de una ráfaga se separan un
   segundo y su dHash puede diferir solo 1-2 bits, pero no son copias, así que se añaden
   (el resumen las cuenta como *parecidas*, para revisarlas luego en *Limpiar repetidas*).
+  Con `--omitir-parecidas` no se añade nada que se parezca (≤ 12 bits, como *Parecidas* en
+  la galería) a una foto de la biblioteca sin llegar a ser igual: otras tomas, editadas,
+  recortes. Van al informe como `PARECIDA`, con la foto a la que se parecen. Lo que solo se
+  parece a otra de la propia colección sí entra (no está en ningún sitio más).
   Se usa el dHash del catálogo (calculado del original) antes que el de la galería (de la
   miniatura), que casa peor con el de otra biblioteca; si quedan cerca del umbral (6-12
   bits), decide el dHash calculado de los dos archivos.
@@ -491,6 +495,10 @@ o cualquier carpeta— sin repetir lo que ya tiene. Lógica en `fusionar.py`.
     carpeta con la misma extensión, la nueva **ocupa el nombre** de la antigua (siguen
     valiendo favoritos y enlaces) y la antigua va a la papelera como `…_sustituida`; si no,
     el favorito pasa a la nueva.
+  - Con `--sin-sustituir` lo que ya está en la biblioteca no se cambia nunca: aunque la de
+    la colección sea mejor, no se añade (el informe lo dice: «esta es mejor…, pero no se
+    sustituye») y la de la biblioteca solo gana sus metadatos (salvo con `--sin-metadatos`).
+    Para añadir una colección llena de copias de lo que ya hay sin que nada se mueva.
   - Dentro de la propia colección tampoco se repite nada: de varias copias entra la mejor.
   - Lo igual a una foto que se quitó antes con *Limpiar repetidas* (está en la papelera o
     su original en `descartadas`) no vuelve.
@@ -536,7 +544,7 @@ o cualquier carpeta— sin repetir lo que ya tiene. Lógica en `fusionar.py`.
 - **Simulación** (`--simular`): no toca la biblioteca ni la colección; el plan completo va
   a un CSV en la carpeta temporal del sistema para revisarlo en Excel antes de fusionar.
   Fuera de simulación, el CSV va a `.exportador/informes/fusion_*.csv`. Acciones:
-  `ANADIDA`, `SUSTITUYE`, `YA_ESTA`, `REPETIDA`, `QUITADA_ANTES`, `ERROR` y `METADATOS`
+  `ANADIDA`, `SUSTITUYE`, `YA_ESTA`, `REPETIDA`, `QUITADA_ANTES`, `PARECIDA`, `ERROR` y `METADATOS`
   (una de la biblioteca que gana los de otra copia); el detalle dice qué gana cada una.
 - La colección **solo se lee**, y no puede estar dentro de la biblioteca ni al revés.
   Los audios no se fusionan.

@@ -163,6 +163,8 @@ Añade a una biblioteca las fotos y vídeos de otra colección (otra biblioteca 
 | `--calidad` N | `88` | Calidad al reducir o convertir una foto (por defecto 88) |
 | `--hilos` N | `0` | Archivos en paralelo (por defecto: según los núcleos del equipo) |
 | `--sin-metadatos` | no | No completar la copia que se queda con los metadatos de las otras copias iguales (fecha, GPS, cámara, etiquetas, personas...); por defecto se completan, sin recomprimir |
+| `--sin-sustituir` | no | No cambiar nada de lo que ya está en la biblioteca: aunque la copia de la colección sea mejor, se queda la de la biblioteca (que sí gana sus metadatos, salvo con --sin-metadatos) |
+| `--omitir-parecidas` | no | No añadir las fotos parecidas a una de la biblioteca sin llegar a ser iguales (otras tomas de una ráfaga, editadas, recortes...: hasta 12 bits, como «Parecidas» en la galería); el informe las lista |
 | `--sin-galeria` | no | No actualizar la galería de la biblioteca al terminar |
 
 ## `galeria`

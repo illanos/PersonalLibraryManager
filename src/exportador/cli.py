@@ -209,6 +209,14 @@ def construir_parser() -> argparse.ArgumentParser:
                        help="No completar la copia que se queda con los metadatos de las otras "
                             "copias iguales (fecha, GPS, cámara, etiquetas, personas...); por "
                             "defecto se completan, sin recomprimir")
+    p_fus.add_argument("--sin-sustituir", action="store_true",
+                       help="No cambiar nada de lo que ya está en la biblioteca: aunque la copia "
+                            "de la colección sea mejor, se queda la de la biblioteca (que sí gana "
+                            "sus metadatos, salvo con --sin-metadatos)")
+    p_fus.add_argument("--omitir-parecidas", action="store_true",
+                       help="No añadir las fotos parecidas a una de la biblioteca sin llegar a "
+                            "ser iguales (otras tomas de una ráfaga, editadas, recortes...: hasta "
+                            "12 bits, como «Parecidas» en la galería); el informe las lista")
     p_fus.add_argument("--sin-galeria", action="store_true",
                        help="No actualizar la galería de la biblioteca al terminar")
 
@@ -377,7 +385,8 @@ def main(argv=None):
                 args.coleccion.resolve(), args.destino.resolve(), args.simular, OpcionesFusion(
                     umbral=args.umbral, margen_dias=args.margen_dias, max_lado=args.max_lado_fotos,
                     calidad=args.calidad, hilos=args.hilos, galeria=not args.sin_galeria,
-                    max_lado_video=args.max_lado_video, metadatos=not args.sin_metadatos))
+                    max_lado_video=args.max_lado_video, metadatos=not args.sin_metadatos,
+                    sustituir=not args.sin_sustituir, omitir_parecidas=args.omitir_parecidas))
         except EspacioInsuficiente as exc:
             sys.exit(f"ERROR: {exc}")
         progreso("fin", "fusionar", resumen=resumen)

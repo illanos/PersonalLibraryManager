@@ -170,6 +170,10 @@ python -m exportador fusionar "D:\Google" --destino "D:\Biblioteca"
 
 # Sin tocar los metadatos de lo que ya está, y vídeos hasta 4K
 python -m exportador fusionar "D:\Google" --destino "D:\Biblioteca" --sin-metadatos --max-lado-video 3840
+
+# Una carpeta llena de copias de lo que ya hay: solo entra lo que no está, sin sustituir
+# nada de la biblioteca y sin las fotos parecidas (otras tomas, editadas)
+python -m exportador fusionar "E:\Fotos viejas" --destino "D:\Biblioteca" --sin-sustituir --omitir-parecidas
 ```
 
 ### Reorganizar una biblioteca ya importada
