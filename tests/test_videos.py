@@ -3,7 +3,7 @@
 import json
 import subprocess
 import unittest
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -22,6 +22,11 @@ PROBE_IPHONE = {
                  "side_data_list": [{"rotation": -90}]},
                 {"codec_type": "audio"}],
 }
+
+
+def hora_local(*utc) -> datetime:
+    """Una hora UTC en la hora local de este equipo, sin zona (como las del catálogo)."""
+    return datetime(*utc, tzinfo=timezone.utc).astimezone().replace(tzinfo=None)
 
 
 class Sondeo(unittest.TestCase):
@@ -140,11 +145,31 @@ class FechaDelNombre(CasoConCarpeta):
         self.assertEqual(videos.fecha_video(Path("VID_20160812_203028.mp4"), info),
                          (info["fecha"], "metadatos"))
 
-    def test_sin_hora_en_el_nombre_o_en_utc_mandan_los_metadatos(self):
+    def test_sin_hora_en_el_nombre_mandan_los_metadatos(self):
         info = {"fecha": datetime(2025, 3, 2, 12, 19, 37)}
-        for nombre in ("PXL_20250302_111937317.mp4",   # Pixel: nombre en UTC
-                       "VID-20250301-WA0001.mp4"):       # WhatsApp: solo el día
-            self.assertEqual(videos.fecha_video(Path(nombre), info), (info["fecha"], "metadatos"))
+        self.assertEqual(videos.fecha_video(Path("VID-20250301-WA0001.mp4"), info),
+                         (info["fecha"], "metadatos"))
+
+    # El Pixel nombra en UTC; lo que estaba en la papelera del móvil lleva .trashed- delante
+    PIXEL = ("PXL_20250302_112109734.mp4", "PXL_20250302_112109734.VB-01.COVER.mp4",
+             ".trashed-1770811117-PXL_20250302_112109734.mp4", "copia_pxl_20250302_112109734.mp4")
+
+    def test_nombre_de_pixel_en_utc_no_desplaza_la_hora(self):
+        info = {"fecha": hora_local(2025, 3, 2, 11, 24, 50)}   # fin de la grabación
+        for nombre in self.PIXEL:
+            self.assertEqual(videos.fecha_video(Path(nombre), info),
+                             (info["fecha"], "metadatos"), nombre)
+
+    def test_nombre_de_pixel_tambien_corrige_metadatos_que_no_cuadran(self):
+        info = {"fecha": hora_local(2025, 3, 2, 11, 50, 58)}   # 29 min después de empezar
+        for nombre in self.PIXEL:
+            self.assertEqual(videos.fecha_video(Path(nombre), info),
+                             (hora_local(2025, 3, 2, 11, 21, 9), "nombre"), nombre)
+
+    def test_nombre_de_pixel_sin_metadatos_pasa_a_hora_local(self):
+        for nombre in self.PIXEL:
+            self.assertEqual(videos.fecha_video(Path(nombre)),
+                             (hora_local(2025, 3, 2, 11, 21, 9), "nombre"), nombre)
 
     def test_el_video_exportado_lleva_la_fecha_corregida(self):
         from datetime import timezone
